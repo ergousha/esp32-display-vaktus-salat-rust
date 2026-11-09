@@ -71,8 +71,14 @@ jobs:
 
       - name: Check the image fits an OTA slot
         run: |
-          out="$(cargo espflash save-image --release --chip esp32 --flash-size 4mb \
-            --partition-table partitions.csv --target-app-partition ota_0 firmware.bin 2>&1)"
+          # The step shell is `bash -e`: a failing command substitution would
+          # exit before its output is shown, so print it before failing.
+          if ! out="$(cargo espflash save-image --release --chip esp32 --flash-size 4mb \
+            --partition-table partitions.csv --target-app-partition ota_0 firmware.bin 2>&1)"; then
+            echo "$out"
+            echo "::error::cargo espflash save-image failed"
+            exit 1
+          fi
           echo "$out"
           line="$(grep 'App/part. size' <<< "$out")"
           used="$(sed -E 's/.*size: *([0-9,]+)\/.*/\1/; s/,//g' <<< "$line")"

@@ -150,7 +150,7 @@ Configure on GitHub via **Settings → Branches → Branch protection rules**:
 | rust.yml | ✅ | ✅ | - | - |
 | esp32-build.yml | ✅ | ✅ | - | - |
 | security-audit.yml | ✅ | ✅ | Weekly | - |
-| release.yml | - | - | - | ✅ |
+| release.yml | ✅ (main) | - | - | - |
 
 ## Local Development
 
@@ -189,18 +189,15 @@ PRs are labeled with `dependencies` tag and assigned to `eakin`.
 
 ## Release Process
 
-To create a release:
+Releases are cut by release-please, not by pushing tags (see `release.yml`
+above):
 
-```bash
-# Tag a new version
-git tag -a v1.0.0 -m "Release 1.0.0"
-git push origin v1.0.0
-```
-
-GitHub Actions will automatically:
-- Create a GitHub release
-- Generate changelog from commits
-- Mark as prerelease if version contains `-`
+1. Merge pull requests with conventional commit titles (`feat:`, `fix:`, ...).
+2. release-please opens or updates a release PR (`chore(main): release X.Y.Z`)
+   that bumps `Cargo.toml` and `CHANGELOG.md`.
+3. Merging that PR tags `vX.Y.Z`, creates the GitHub Release, and the firmware
+   job uploads the image to `s3://<bucket>/vaktus/`, which updates the fleet
+   over the air.
 
 ## Maintenance
 
