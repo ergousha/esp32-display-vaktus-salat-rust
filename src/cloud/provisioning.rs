@@ -22,8 +22,10 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
 /// Why provisioning did not complete.
 #[derive(Debug)]
 pub enum Failure {
-    /// AWS IoT refused: typically the device is not registered yet, or with
-    /// another key.
+    /// The pre-provisioning hook refused the device: not registered yet, or
+    /// registered with another key or product. Registering it fixes this.
+    NotRegistered(String),
+    /// AWS IoT refused for another reason (throttling, the template, the CSR).
     Rejected(String),
     /// Anything else (network, timeout, chip): worth retrying.
     Error(anyhow::Error),
@@ -108,10 +110,12 @@ pub fn provision(
     )?;
     let (topic, payload) = answer(&events, &[&reg_accepted, &reg_rejected])?;
     if topic == reg_rejected {
-        return Err(Failure::Rejected(format!(
-            "RegisterThing: {}",
-            wire::describe_rejection(&payload)
-        )));
+        let why = format!("RegisterThing: {}", wire::describe_rejection(&payload));
+        return Err(if wire::registration_refused(&payload) {
+            Failure::NotRegistered(why)
+        } else {
+            Failure::Rejected(why)
+        });
     }
     let thing_name = wire::parse_registered(&payload).map_err(|e| anyhow!(e))?;
     log::info!("provisioning: APPROVED, thing {thing_name}");
@@ -120,6 +124,7 @@ pub fn provision(
     Ok(Identity {
         thing_name,
         certificate_pem: issued.certificate_pem,
+        public_key: chip.public_key_hex(),
     })
 }
 

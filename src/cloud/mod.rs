@@ -43,6 +43,15 @@ const VERIFY_DEADLINE: Duration = Duration::from_secs(10 * 60);
 /// Provisioning retry backoff while the device is not registered yet.
 const PROVISION_RETRY_MIN: Duration = Duration::from_secs(60);
 const PROVISION_RETRY_MAX: Duration = Duration::from_secs(15 * 60);
+/// Backoff before the cloud link starts over after an error (a chip or NVS
+/// hiccup, a connection that dropped while it was being set up).
+const RUN_RETRY_MIN: Duration = Duration::from_secs(30);
+const RUN_RETRY_MAX: Duration = Duration::from_secs(10 * 60);
+/// A run that lasted this long was healthy: the next error backs off from the
+/// start again.
+const RUN_HEALTHY: Duration = Duration::from_secs(10 * 60);
+/// How often a failed Jobs subscription is tried again while connected.
+const JOBS_RETRY: Duration = Duration::from_secs(30);
 /// How often the shadow report is refreshed.
 const REPORT_EVERY: Duration = Duration::from_secs(6 * 3600);
 /// The MQTT input buffer: a `$next/get/accepted` with a presigned URL is
@@ -113,9 +122,20 @@ pub fn spawn(nvs: EspDefaultNvsPartition, mac: [u8; 6]) {
         .name("cloud".into())
         .stack_size(CLOUD_STACK)
         .spawn(move || {
-            if let Err(e) = run(nvs, mac) {
-                set_status(format!("stopped: {e:#}"));
-                log::error!("cloud: {e:#}");
+            // Never give up: a cloud link that stopped would mean no OTA until
+            // a power cycle, and on a fresh image a rollback by the guard.
+            let mut backoff = RUN_RETRY_MIN;
+            loop {
+                let started = Instant::now();
+                if let Err(e) = run(nvs.clone(), mac) {
+                    log::error!("cloud: {e:#}");
+                    set_status(format!("error, retrying: {e:#}"));
+                }
+                if started.elapsed() >= RUN_HEALTHY {
+                    backoff = RUN_RETRY_MIN;
+                }
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(RUN_RETRY_MAX);
             }
         });
     if let Err(e) = spawned {
@@ -153,7 +173,17 @@ fn run(nvs: EspDefaultNvsPartition, mac: [u8; 6]) -> Result<()> {
     );
 
     let store = IdentityStore::new(nvs.clone())?;
-    let identity = match store.load() {
+    let stored = store.load().filter(|id| {
+        let ours = id.public_key == chip.public_key_hex();
+        if !ours {
+            log::warn!(
+                "cloud: the stored identity {} is not for this chip's key; provisioning again",
+                id.thing_name
+            );
+        }
+        ours
+    });
+    let identity = match stored {
         Some(id) => id,
         None => {
             let mut backoff = PROVISION_RETRY_MIN;
@@ -164,12 +194,16 @@ fn run(nvs: EspDefaultNvsPartition, mac: [u8; 6]) -> Result<()> {
                         store.save(&id)?;
                         break id;
                     }
-                    Err(provisioning::Failure::Rejected(why)) => {
-                        log::warn!("provisioning rejected: {why}");
+                    Err(provisioning::Failure::NotRegistered(why)) => {
+                        log::warn!("provisioning refused by the registry: {why}");
                         set_status(format!(
                             "awaiting registration ({})",
                             wire::mac_string(&mac)
                         ));
+                    }
+                    Err(provisioning::Failure::Rejected(why)) => {
+                        log::warn!("provisioning rejected: {why}");
+                        set_status(format!("provisioning refused: {why}"));
                     }
                     Err(provisioning::Failure::Error(e)) => {
                         log::warn!("provisioning failed: {e:#}");
@@ -224,7 +258,10 @@ fn run(nvs: EspDefaultNvsPartition, mac: [u8; 6]) -> Result<()> {
             }
         };
     }
-    jobs.start(link!()).map_err(anyhow::Error::msg)?;
+    // Not fatal: the connection may already have dropped again. Retried every
+    // JOBS_RETRY until it goes through, and on every reconnect.
+    let mut jobs_started = start_jobs(&mut jobs, link!());
+    let mut last_jobs_start = Instant::now();
     let reporter = Reporter {
         client: &client,
         thing: &identity.thing_name,
@@ -245,9 +282,8 @@ fn run(nvs: EspDefaultNvsPartition, mac: [u8; 6]) -> Result<()> {
             Ok(MqttEvent::Connected) => {
                 log::info!("cloud: MQTT reconnected; restoring the Jobs subscriptions");
                 set_status(format!("online: {}", identity.thing_name));
-                if let Err(e) = jobs.start(link!()) {
-                    log::error!("could not restore the Jobs subscriptions: {e}");
-                }
+                jobs_started = start_jobs(&mut jobs, link!());
+                last_jobs_start = Instant::now();
             }
             Ok(MqttEvent::Disconnected) => set_status("offline; reconnecting"),
             Ok(MqttEvent::Message { topic, data }) => {
@@ -260,12 +296,27 @@ fn run(nvs: EspDefaultNvsPartition, mac: [u8; 6]) -> Result<()> {
             Err(_) => {}
         }
         if last_tick.elapsed() >= Duration::from_secs(1) {
+            if !jobs_started && last_jobs_start.elapsed() >= JOBS_RETRY {
+                jobs_started = start_jobs(&mut jobs, link!());
+                last_jobs_start = Instant::now();
+            }
             jobs.tick(link!(), Instant::now());
             last_tick = Instant::now();
         }
         if last_report.elapsed() >= REPORT_EVERY {
             reporter.send();
             last_report = Instant::now();
+        }
+    }
+}
+
+/// Subscribes the Jobs topics and asks for queued work; logs a failure.
+fn start_jobs(jobs: &mut JobsClient, link: &mut Link<'_>) -> bool {
+    match jobs.start(link) {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!("cloud: Jobs subscriptions not set up yet: {e}");
+            false
         }
     }
 }

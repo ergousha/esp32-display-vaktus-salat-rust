@@ -43,6 +43,10 @@ impl FrameBuf {
         self.width
     }
 
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// Pushes the buffer to `display` with its top-left at `top_left`, in one
     /// batched SPI transfer (`fill_contiguous` -> a single `set_pixels`).
     pub fn flush<D>(&self, display: &mut D, top_left: Point) -> Result<(), D::Error>

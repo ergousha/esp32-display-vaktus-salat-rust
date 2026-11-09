@@ -4,17 +4,27 @@
 use std::ffi::CStr;
 use std::ptr;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use embedded_svc::http::Headers;
 use esp_idf_svc::http::client::{Configuration as HttpConfiguration, EspHttpConnection};
 use esp_idf_svc::ota::EspOta;
 use esp_idf_svc::sys::{
-    esp_ota_get_last_invalid_partition, esp_ota_get_next_update_partition,
-    esp_ota_get_running_partition, esp_ota_get_state_partition, esp_ota_img_states_t,
-    esp_ota_img_states_t_ESP_OTA_IMG_NEW, esp_ota_img_states_t_ESP_OTA_IMG_PENDING_VERIFY,
-    esp_partition_t, ESP_OK,
+    esp, esp_ota_abort, esp_ota_begin, esp_ota_end, esp_ota_get_last_invalid_partition,
+    esp_ota_get_next_update_partition, esp_ota_get_running_partition, esp_ota_get_state_partition,
+    esp_ota_handle_t, esp_ota_img_states_t, esp_ota_img_states_t_ESP_OTA_IMG_NEW,
+    esp_ota_img_states_t_ESP_OTA_IMG_PENDING_VERIFY, esp_ota_set_boot_partition, esp_ota_write,
+    esp_partition_t, ESP_OK, OTA_WITH_SEQUENTIAL_WRITES,
 };
 use iot_jobs::BootFacts;
 use log::{error, info};
+
+/// Download attempts per update before it is given up (and the job reported
+/// FAILED). A failed read resumes where it stopped (HTTP Range), so these cost
+/// only what was lost. The usual cause is transient: with
+/// CONFIG_MBEDTLS_DYNAMIC_BUFFER every incoming TLS record needs a fresh
+/// ~16.7 KB block, and with ~57 KB free and the MQTT session receiving at the
+/// same moment, one occasionally is not there (measured on the bench unit).
+const MAX_DOWNLOAD_TRIES: u32 = 5;
 
 /// Performs an Over-The-Air (OTA) update from the given HTTP(S) URL.
 ///
@@ -23,63 +33,159 @@ use log::{error, info};
 /// boot slot. If it fails, the update is abandoned and the running image stays
 /// the one that boots. Returns the slot label.
 pub fn perform_ota(url: &str, before_activate: impl FnOnce(&str) -> Result<()>) -> Result<String> {
-    info!("Starting OTA firmware download.");
+    info!(
+        "Starting OTA firmware download (free heap {} B, largest block {} B).",
+        unsafe { esp_idf_svc::sys::esp_get_free_heap_size() },
+        largest_free_block()
+    );
 
-    // Initialize HTTP connection for downloading the firmware
-    let http_config = HttpConfiguration {
-        crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
-        buffer_size_tx: Some(4096),
-        buffer_size: Some(4096),
-        ..Default::default()
-    };
-
-    let mut connection = EspHttpConnection::new(&http_config)?;
-    connection.initiate_request(
-        esp_idf_svc::http::Method::Get,
-        url,
-        &[("Accept", "application/octet-stream")],
-    )?;
-    connection.initiate_response()?;
-
-    let status = connection.status();
-    if status != 200 {
-        error!("OTA download failed with HTTP status: {}", status);
-        anyhow::bail!("HTTP status: {}", status);
-    }
-
-    // Initialize OTA API
-    let mut ota = EspOta::new()?;
-    // The partition `initiate_update` writes to.
-    let slot = label(unsafe { esp_ota_get_next_update_partition(ptr::null()) })
-        .context("no OTA partition to update")?;
-    let mut update = ota.initiate_update()?;
-
-    let mut buf = [0u8; 4096];
-    let mut downloaded = 0;
+    // Raw esp_ota_* rather than EspOta: EspOta::initiate_update passes
+    // OTA_SIZE_UNKNOWN, which erases the whole 1984 KiB slot up front. Flash
+    // erases stall both cores, so the clock and touch would freeze for
+    // seconds. OTA_WITH_SEQUENTIAL_WRITES erases each sector just before it
+    // is written instead.
+    // SAFETY: the partition pointer comes from the static partition table.
+    let partition = unsafe { esp_ota_get_next_update_partition(ptr::null()) };
+    let slot = label(partition).context("no OTA partition to update")?;
+    let mut handle: esp_ota_handle_t = 0;
+    esp!(unsafe { esp_ota_begin(partition, OTA_WITH_SEQUENTIAL_WRITES as usize, &mut handle,) })
+        .context("starting the OTA write")?;
+    // Frees the handle on any early return; disarmed once esp_ota_end ran.
+    let mut guard = AbortOnDrop(Some(handle));
 
     info!("Downloading and writing firmware to OTA partition {slot}...");
+    let mut download = Download {
+        url,
+        handle,
+        written: 0,
+        total: None,
+    };
+    let mut tries = 1;
     loop {
-        let bytes_read = connection.read(&mut buf)?;
-        if bytes_read == 0 {
-            break; // EOF
-        }
-        update.write(&buf[..bytes_read])?;
-        downloaded += bytes_read;
-        if downloaded % (4096 * 10) == 0 {
-            info!("Downloaded {} bytes", downloaded);
+        match download.resume() {
+            Ok(()) => break,
+            Err(e) if tries < MAX_DOWNLOAD_TRIES => {
+                log::warn!(
+                    "OTA download interrupted at {} bytes ({e:#}); resuming, try {} of {MAX_DOWNLOAD_TRIES} \
+                     (largest free block {} B)",
+                    download.written,
+                    tries + 1,
+                    largest_free_block()
+                );
+                std::thread::sleep(std::time::Duration::from_secs(2 * u64::from(tries)));
+                tries += 1;
+            }
+            Err(e) => {
+                return Err(e).context(format!("OTA download failed {MAX_DOWNLOAD_TRIES} times"))
+            }
         }
     }
+    info!("Download complete. Total {} bytes.", download.written);
 
-    info!("Download complete. Total {} bytes.", downloaded);
-
-    // Verify the image, then set the boot partition, with the caller's step in
-    // between: `complete()` would do both at once.
-    let finished = update.finish()?;
+    // Verify the image (esp_ota_end), then set the boot partition, with the
+    // caller's step in between.
+    guard.0 = None;
+    esp!(unsafe { esp_ota_end(handle) }).context("verifying the OTA image")?;
     before_activate(&slot).context("preparing to activate the new image")?;
-    finished.activate()?;
+    esp!(unsafe { esp_ota_set_boot_partition(partition) }).context("activating the new image")?;
     info!("OTA update successful. Ready for reboot.");
 
     Ok(slot)
+}
+
+/// An image download in progress, resumable from `written`.
+struct Download<'a> {
+    url: &'a str,
+    handle: esp_ota_handle_t,
+    /// Bytes written to the slot so far.
+    written: usize,
+    /// Image size, from the first response's Content-Length.
+    total: Option<usize>,
+}
+
+impl Download<'_> {
+    /// Fetches the rest of the image (from `written` on) and writes it.
+    /// Returns once the whole image is written; an error leaves `written` at
+    /// what was written, for the next call to resume from.
+    fn resume(&mut self) -> Result<()> {
+        let http_config = HttpConfiguration {
+            crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+            // The request line carries the presigned URL (~1.5 KB).
+            buffer_size_tx: Some(4096),
+            buffer_size: Some(4096),
+            ..Default::default()
+        };
+        let mut connection = EspHttpConnection::new(&http_config)?;
+        let range = format!("bytes={}-", self.written);
+        let mut headers = vec![("Accept", "application/octet-stream")];
+        if self.written > 0 {
+            headers.push(("Range", range.as_str()));
+        }
+        connection.initiate_request(esp_idf_svc::http::Method::Get, self.url, &headers)?;
+        connection.initiate_response()?;
+
+        let status = connection.status();
+        let expected = if self.written == 0 { 200 } else { 206 };
+        if status != expected {
+            error!("OTA download: HTTP status {status}, expected {expected}");
+            bail!("HTTP status {status} (expected {expected})");
+        }
+        if self.written == 0 {
+            self.total = connection.content_len().map(|n| n as usize);
+        } else {
+            // "bytes <first>-<last>/<size>": it must continue where we stopped.
+            let range = connection.header("Content-Range").unwrap_or_default();
+            let first = range
+                .strip_prefix("bytes ")
+                .and_then(|r| r.split('-').next())
+                .and_then(|n| n.parse::<usize>().ok());
+            if first != Some(self.written) {
+                bail!(
+                    "resumed at the wrong offset (Content-Range {range:?}, wanted {})",
+                    self.written
+                );
+            }
+        }
+
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = connection.read(&mut buf)?;
+            if n == 0 {
+                break; // EOF
+            }
+            esp!(unsafe { esp_ota_write(self.handle, buf.as_ptr().cast(), n) })
+                .context("writing the OTA image")?;
+            let before = self.written;
+            self.written += n;
+            if self.written / (4096 * 40) != before / (4096 * 40) {
+                info!("Downloaded {} bytes", self.written);
+            }
+        }
+        if let Some(total) = self.total {
+            if self.written < total {
+                bail!("connection closed at {} of {total} bytes", self.written);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Largest block the 8-bit heap can hand out, for the download logs.
+fn largest_free_block() -> usize {
+    unsafe { esp_idf_svc::sys::heap_caps_get_largest_free_block(esp_idf_svc::sys::MALLOC_CAP_8BIT) }
+}
+
+/// Aborts an unfinished OTA write, freeing its handle.
+struct AbortOnDrop(Option<esp_ota_handle_t>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            // SAFETY: a handle from esp_ota_begin that esp_ota_end has not
+            // consumed.
+            unsafe { esp_ota_abort(handle) };
+        }
+    }
 }
 
 /// Marks the current running firmware as valid so it won't rollback on next boot.

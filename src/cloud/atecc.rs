@@ -7,15 +7,35 @@
 //! (`use_secure_element`); this module only sets the chip up, reads the
 //! public key, and signs the CSR digest during provisioning.
 //!
-//! Every call runs on a private CryptoAuthLib device context, not the global
-//! one: esp-tls calls `atcab_release()` at the end of *every* TLS session
-//! (prayer-time HTTPS included), which frees the global context and would
-//! pull it out from under a call in progress here.
+//! Two CryptoAuthLib device contexts are in play:
+//!
+//! - This module's calls run on a private one (`atcab_init_ext`), released
+//!   when each call is done.
+//! - esp-tls uses the global one for the MQTT handshake: `esp_init_atecc608a`
+//!   re-creates it on every secure-element connection (`atcab_init_ext`
+//!   releases the previous one first), and the ECDSA sign callback keeps a
+//!   raw pointer to it for the whole handshake. But esp-tls also calls
+//!   `atcab_release()` at the end of *every* TLS session, prayer-time and OTA
+//!   HTTPS included, on any task. One ending during an MQTT handshake would
+//!   free the device that handshake is signing with, and dropping the I2C
+//!   driver's last reference would delete it under a running transfer.
+//!   [`__wrap_atcab_release`] makes that call a no-op (`-Wl,--wrap` in
+//!   `.cargo/config.toml`), so the global device is only ever replaced by the
+//!   next secure-element connection, on the esp-mqtt task that uses it.
 
 use std::sync::Mutex;
 
 use anyhow::{bail, Result};
 use esp_idf_svc::sys::atca;
+use namaz_vakti_logic::secure_element::{self, LockState};
+
+/// Replaces `atcab_release()` for every caller outside CryptoAuthLib's own
+/// `atca_basic.c` (`-Wl,--wrap=atcab_release`), which in this firmware means
+/// esp-tls's session cleanup. See the module documentation.
+#[no_mangle]
+pub extern "C" fn __wrap_atcab_release() -> atca::ATCA_STATUS {
+    0 // ATCA_SUCCESS
+}
 
 const KEY_SLOT: u16 = 0;
 const LOCK_ZONE_CONFIG: u8 = 0x00;
@@ -92,22 +112,23 @@ pub fn ensure_identity() -> Result<Identity> {
         )?;
         let slot0_config = u16::from_le_bytes([config[20], config[21]]);
         let slot0_key_config = u16::from_le_bytes([config[96], config[97]]);
-        let key_type = (slot0_key_config >> 2) & 0x7;
-        let private = slot0_key_config & 1 == 1;
-        let ext_sign = slot0_config & 0x1 != 0;
-        let genkey_writes = slot0_config & 0x2000 != 0;
-        if !(private && key_type == 4 && ext_sign && genkey_writes) {
-            bail!(
-                "ATECC608B slot 0 is not a P-256 private key for external signing \
-                 (SlotConfig 0x{slot0_config:04X}, KeyConfig 0x{slot0_key_config:04X})"
-            );
-        }
 
         let mut locked = false;
         check(
             "lock state",
             atca::calib_is_locked(dev, LOCK_ZONE_CONFIG, &mut locked),
         )?;
+        // SlotLocked (bytes 88-89): bit n clear = slot n locked.
+        let slot0_locked = u16::from_le_bytes([config[88], config[89]]) & 1 == 0;
+        // Before anything one-way: an unlocked chip must be exactly factory
+        // fresh, a locked one must still be usable as the device key.
+        let lock = LockState {
+            config_locked: locked,
+            slot0_locked,
+        };
+        if let Err(why) = secure_element::check_slot0(slot0_config, slot0_key_config, lock) {
+            bail!("ATECC608B {why}");
+        }
         if !locked {
             log::warn!("ATECC608B: locking the configuration zone (one-way)");
             check("lock config zone", atca::calib_lock_config_zone(dev))?;
@@ -121,8 +142,7 @@ pub fn ensure_identity() -> Result<Identity> {
             check("lock data zone", atca::calib_lock_data_zone(dev))?;
         }
 
-        // SlotLocked (bytes 88-89): bit n clear = slot n locked. Re-read: the
-        // config zone could only have been read before the lock above.
+        // Re-read the lock bytes: the zone was read before the locks above.
         check(
             "read config",
             atca::calib_read_config_zone(dev, config.as_mut_ptr()),

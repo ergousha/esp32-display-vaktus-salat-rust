@@ -347,9 +347,13 @@ cargo run -p seed-device --target host-tuple -- \
     --product vaktus --mac 38:18:2B:84:56:F4 --public-key <128 hex digits>
 ```
 
-Until then provisioning is rejected, and the device retries (1 minute, backing
-off to 15); **Settings → About → Cloud** shows `awaiting registration (MAC)`.
-There is no shared secret: only the chip holding the registered key can enrol.
+Until then the registry refuses it (403), and the device retries (1 minute,
+backing off to 15); **Settings → About → Cloud** shows
+`awaiting registration (MAC)`. Other refusals (throttling, a template problem)
+show `provisioning refused: …` with the reason. There is no shared secret: only
+the chip holding the registered key can enrol. The stored identity remembers
+which key it was issued for, so a unit whose ATECC608B module is replaced
+provisions again (register the new key first).
 
 ### OTA updates
 
@@ -390,8 +394,11 @@ espflash flash --bootloader target/bootloader.bin --partition-table partitions.c
 ```
 
 `--bootloader` matters: espflash's bundled bootloader has no OTA rollback.
-[`espflash.toml`](espflash.toml) and the `cargo run` runner pass the same
-options.
+`--erase-parts otadata` matters on every USB flash, not only this one: after
+an OTA update otadata points at `ota_1`, and without the erase the bootloader
+keeps booting that instead of what was just written to `ota_0`. The
+`cargo run` runner passes all of these; [`espflash.toml`](espflash.toml) only
+covers the bootloader and the partition table.
 
 ### Build configuration
 
@@ -492,7 +499,7 @@ cargo build --release
 cargo run --release      # flashes (bootloader, partition table, ota_0) and opens the monitor
 # or by hand:
 espflash flash --port /dev/ttyUSB0 --bootloader target/bootloader.bin \
-    --partition-table partitions.csv --target-app-partition ota_0 \
+    --partition-table partitions.csv --target-app-partition ota_0 --erase-parts otadata \
     target/xtensa-esp32-espidf/release/namaz-vakti
 espflash monitor --port /dev/ttyUSB0   # optional: view logs over serial
 ```
