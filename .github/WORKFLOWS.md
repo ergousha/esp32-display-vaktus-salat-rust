@@ -24,10 +24,12 @@ the `esp` toolchain + ESP-IDF SDK, so it isn't checked here — see
 Triggers on: `push` to main/develop, `pull_request` to main/develop
 
 #### `esp32-build.yml`
-ESP32-specific build verification:
-- Builds for ESP32 target
-- Checks binary size with cargo-bloat
-- Runs on macOS for ARM64 host support
+ESP32 firmware build (Ubuntu, `esp-rs/xtensa-toolchain`):
+- Builds the firmware and the `atecc608_probe` bench example for the ESP32
+- Packs the OTA app image (`cargo espflash save-image`, `partitions.csv`) and
+  **fails if it takes more than 90% of an OTA slot**: the slot size is frozen in
+  the field, so an update must always fit. The size goes to the job summary.
+- Builds without AWS access, so the image has the cloud link off.
 
 Triggers on: `push` to main/develop, `pull_request` to main/develop
 
@@ -39,12 +41,28 @@ Security vulnerability scanning:
 Triggers on: `push` to main/develop, `pull_request` to main/develop, weekly schedule
 
 #### `release.yml`
-Automated release creation:
-- Creates GitHub releases from git tags
-- Generates changelog from commit history
-- Triggered when pushing version tags (v*.*.*)
+Release and OTA delivery, as in the OPC UA gateway:
+- **release-please** keeps a release PR up to date from the conventional
+  commits on `main` (`feat:` → minor, `fix:` → patch while below 1.0, see
+  `release-please-config.json`). Merging it bumps `Cargo.toml`, updates
+  `CHANGELOG.md`, tags `vX.Y.Z` and creates the GitHub Release.
+- **firmware** then builds that release with AWS credentials from GitHub OIDC
+  (the `vaktus` CI role of iot-platform-infra), so `build.rs` compiles in the
+  IoT endpoint, the `vaktus` provisioning template and the claim identity from
+  SSM; refuses an image with placeholders; and uploads it to
+  `s3://<bucket>/vaktus/firmware_vX.Y.Z.bin`. That upload creates the AWS IoT
+  Job that updates the `esp32-ztp-vaktus-fleet` devices over the air.
+- The image holds the claim private key, so it is never attached to the
+  (public) GitHub Release.
 
-Triggers on: push tags matching `v*.*.*`
+Triggers on: `push` to main
+
+##### Release process: one-time setup
+- Repository variables: `AWS_ROLE_ARN`
+  (`arn:aws:iam::<account>:role/esp32-ztp-vaktus-github-actions-role`),
+  `AWS_FIRMWARE_BUCKET`, `RELEASE_PLEASE_APP_CLIENT_ID`.
+- Repository secret `RELEASE_PLEASE_APP_PRIVATE_KEY`, and the release-please
+  GitHub App installed on this repository (the same app as the gateway's).
 
 ### Automation
 
