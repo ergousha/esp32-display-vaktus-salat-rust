@@ -1,5 +1,6 @@
 mod about;
 mod cache;
+mod cloud;
 mod framebuf;
 mod keyboard;
 mod location;
@@ -68,6 +69,12 @@ pub struct Config {
     wifi_ssid: &'static str,
     #[default("")]
     wifi_psk: &'static str,
+    /// AWS IoT endpoint and provisioning template; build.rs writes both from
+    /// SSM (iot-platform-infra). Empty: the cloud link stays off.
+    #[default("")]
+    iot_endpoint: &'static str,
+    #[default("")]
+    provisioning_template: &'static str,
 }
 
 /// Which calendar the header's date is shown in. Chosen from the settings
@@ -160,13 +167,18 @@ fn zone_display_color(zone: Zone) -> Rgb565 {
 }
 
 // Big seven-segment countdown geometry ("HH:MM:SS"). Sized so all 8 glyphs fit
-// within the 480px panel with margins; a RAM framebuffer of `CD_BOX_W` x
-// `CD_DIGIT_H` (see [`framebuf::FrameBuf`]) backs it so the whole box flushes in
-// one SPI transfer, cheap enough to repaint every second.
+// within the 480px panel with margins; a RAM framebuffer one band high
+// (`CD_DIGIT_H / CD_BANDS`, see [`framebuf::FrameBuf`]) backs it, so the box
+// flushes in `CD_BANDS` SPI transfers, cheap enough to repaint every second.
 const CD_DIGIT_W: u32 = 42;
 const CD_DIGIT_H: u32 = 80;
 const CD_THICK: u32 = 10;
 const CD_GAP: u32 = 10;
+/// The countdown is rendered in this many horizontal bands through one
+/// band-sized framebuffer. A full-height buffer is 342x80 px = ~55 KB in one
+/// block, the largest allocation in the firmware; with the cloud link up, the
+/// heap then had no 16.7 KB block left for an OTA download's TLS records.
+const CD_BANDS: u32 = 2;
 const CD_DIGITS_Y: i32 = 74;
 
 fn main() -> anyhow::Result<()> {
@@ -176,6 +188,9 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
+    // Before anything that can block (WiFi setup waits for a person): a new
+    // OTA image that never reaches AWS IoT must still be rolled back.
+    cloud::start_rollback_guard();
 
     // --- Persisted UI settings (language + header date mode) ---
     // Loaded before the first splash so every status message renders in the
@@ -383,6 +398,13 @@ fn main() -> anyhow::Result<()> {
     }
     log::info!("SNTP sync status: {:?}", sntp.get_sync_status());
 
+    // --- Cloud link (AWS IoT: provisioning, OTA updates, shadow) ---
+    // Runs on its own thread; the dashboard never waits for it.
+    match wifi.wifi().sta_netif().get_mac() {
+        Ok(mac) => cloud::spawn(nvs.clone(), mac),
+        Err(e) => log::error!("no station MAC, cloud link not started: {e:?}"),
+    }
+
     // --- Prayer time data: the NVS cache (loaded above) lets a reboot show the
     // dashboard immediately instead of blocking on a fresh HTTPS fetch ---
     let mut last_fetch_attempt;
@@ -445,7 +467,7 @@ fn main() -> anyhow::Result<()> {
     // Sized to the widest countdown string so the buffer width matches exactly
     // what `draw_big_time` renders (used for centering at flush time).
     let clock_box_w = segdisplay::measure_big_time("00:00:00", CD_DIGIT_W, CD_THICK, CD_GAP);
-    let mut clock_fb = FrameBuf::new(clock_box_w, CD_DIGIT_H, col_bg());
+    let mut clock_fb = FrameBuf::new(clock_box_w, CD_DIGIT_H / CD_BANDS, col_bg());
 
     // The header date mode now comes from persisted settings rather than a
     // tap gesture. `press_handled` de-bounces the gear tap so one finger-down
@@ -1349,24 +1371,30 @@ where
     let countdown = format!("{h:02}:{m:02}:{s:02}");
 
     // Render the seven-segment glyphs into the RAM framebuffer (no SPI traffic),
-    // clearing last frame's segments first, then push the whole clock box to the
-    // panel in one batched transfer. Drawing is in buffer-local coordinates, so
-    // the digits start at x=0 and the buffer's width equals the drawn width.
-    fb.clear_fill(col_bg());
-    segdisplay::draw_big_time(
-        fb,
-        Point::new(0, 0),
-        CD_DIGIT_W,
-        CD_DIGIT_H,
-        CD_THICK,
-        CD_GAP,
-        &countdown,
-        col_text(),
-    )
-    .map_err(|_| anyhow::anyhow!("draw error"))?;
+    // clearing last frame's segments first, then push it to the panel in one
+    // batched transfer. The buffer holds one horizontal band of the clock box
+    // (CD_BANDS): each band draws the whole countdown shifted up by the band's
+    // offset, the buffer clips what falls outside, and the band is flushed to
+    // its place. Drawing is in buffer-local coordinates, so the digits start at
+    // x=0 and the buffer's width equals the drawn width.
     let start_x = 240 - (fb.width() as i32) / 2;
-    fb.flush(display, Point::new(start_x, CD_DIGITS_Y))
+    for band in 0..CD_BANDS {
+        let band_y = (band * fb.height()) as i32;
+        fb.clear_fill(col_bg());
+        segdisplay::draw_big_time(
+            fb,
+            Point::new(0, -band_y),
+            CD_DIGIT_W,
+            CD_DIGIT_H,
+            CD_THICK,
+            CD_GAP,
+            &countdown,
+            col_text(),
+        )
         .map_err(|_| anyhow::anyhow!("draw error"))?;
+        fb.flush(display, Point::new(start_x, CD_DIGITS_Y + band_y))
+            .map_err(|_| anyhow::anyhow!("draw error"))?;
+    }
 
     // Progress bar (Fıkh-driven remaining time). Three static, equal-width color
     // zones from left to right — Fazilet (green), Cevaz (orange), Kerahet (red).

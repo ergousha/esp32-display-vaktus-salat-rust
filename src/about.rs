@@ -29,7 +29,7 @@ const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Row layout: a localized label line, then its Latin value just below.
 const CONTENT_X: i32 = 20;
 const FIRST_ROW_Y: i32 = 70;
-const ROW_PITCH: i32 = 70;
+const ROW_PITCH: i32 = 62;
 
 /// Renders the About page and blocks until the user taps the back arrow.
 pub fn run<D, SPI>(
@@ -87,6 +87,10 @@ where
     draw_field(display, lang, 0, Msg::AboutHardware, HARDWARE_MODEL)?;
     draw_field(display, lang, 1, Msg::AboutFirmware, FIRMWARE_VERSION)?;
     draw_field(display, lang, 2, Msg::AboutMac, mac)?;
+    // Not localized: thing name, "awaiting registration (MAC)", errors. Cut to
+    // what fits the 480 px line in the Medium font.
+    let cloud: String = crate::cloud::status_line().chars().take(44).collect();
+    draw_field(display, lang, 3, Msg::AboutCloud, &cloud)?;
     Ok(())
 }
 

@@ -199,7 +199,14 @@ src/
 ├── main.rs        WiFi/SNTP/display/touch/backlight bring-up, main loop, all drawing code
 ├── settings_screen.rs  Settings screen: language/date options + the 4 System actions
 ├── keyboard.rs     Shared on-screen keyboard + text-entry screen (WiFi + Location)
-├── about.rs        About page: hardware model, firmware version, station MAC
+├── about.rs        About page: hardware model, firmware version, station MAC, cloud status
+├── cloud/          AWS IoT link, on its own thread (see "Cloud link and OTA updates")
+│   ├── mod.rs        boot flow: secure element -> provisioning -> MQTT -> Jobs + shadow
+│   ├── atecc.rs      ATECC608B setup (lock, slot-0 key), public key, CSR signing
+│   ├── provisioning.rs  fleet provisioning by claim with a chip-signed CSR
+│   ├── mqtt.rs       esp-mqtt over the raw ESP-IDF API (secure-element TLS)
+│   ├── identity.rs   thing name + certificate in NVS
+│   ├── jobs.rs, ota.rs, job_store.rs  OTA updates through AWS IoT Jobs
 ├── location.rs     NVS load/save for the selected location + the Ezan Vakti list fetches
 ├── location_setup.rs  Touch-driven location picker: country/city/district typed search
 ├── prayer.rs       HTTPS fetch + JSON model for the ezanvakti API (parameterized by district id)
@@ -276,6 +283,134 @@ The pure affine solve/apply math (`Calibration`, least-squares `solve_affine`,
   "indiriliyor..." fetch screen from a completely empty flash (very first
   boot, or a corrupt/erased NVS) is the only time a boot actually waits on
   the HTTPS call.
+
+## Cloud link and OTA updates
+
+The display is the `vaktus` product of the AWS IoT platform in
+[`iot-platform-infra`](https://github.com/ergousha/iot-platform-infra), next to
+the OPC UA gateway. The cloud link runs on its own thread; the dashboard never
+waits for it, and prayer times keep working with no cloud at all.
+
+```mermaid
+sequenceDiagram
+    participant D as Display (ESP32 + ATECC608B)
+    participant IOT as AWS IoT Core
+    participant HOOK as Pre-provisioning hook
+    participant DB as Device registry
+    D->>D: first boot: lock the chip, generate the slot-0 key (one-way)
+    D->>D: log REGISTER mac=… public_key=…
+    Note over D,DB: operator: seed-device --product vaktus --mac … --public-key …
+    D->>IOT: connect with the shared claim certificate
+    D->>IOT: CreateCertificateFromCsr (CSR signed inside the chip)
+    IOT-->>D: certificate for the chip's key
+    D->>IOT: RegisterThing (SerialNumber, MacAddress)
+    IOT->>HOOK: pre-provisioning check
+    HOOK->>DB: record for this MAC
+    HOOK-->>IOT: allow only if product = vaktus and the certificate carries the registered key
+    IOT-->>D: thingName
+    D->>IOT: connect as the thing; TLS signed by the chip
+    D->>IOT: AWS IoT Jobs (OTA), shadow "vaktus" report
+```
+
+### Secure element: ATECC608B
+
+An ATECC608B add-on sits on the board's 4-pin I2C header (**SDA GPIO32, SCL
+GPIO25**, address 0xC0; the module brings its own pull-ups). The classic ESP32
+has no key-protection hardware of its own, so the chip holds the device's
+private key: generated inside it, never readable, and the only key the device
+ever authenticates with.
+
+- **First boot** (any blank chip): the firmware locks the configuration zone as
+  it left the factory (slot 0 is already a P-256 private key for external
+  signing, writable only by GenKey), locks the data zone, generates the key in
+  slot 0 and locks the slot. **This is one-way**: the chip keeps that key for
+  good. Each step checks the lock state first, so a power cut resumes.
+- The firmware talks to the chip through Microchip CryptoAuthLib
+  (`espressif/esp-cryptoauthlib`, TrustCustom), on a private device context;
+  esp-tls uses it for the TLS handshake (`CONFIG_ESP_TLS_USE_SECURE_ELEMENT`).
+- `examples/atecc608_probe.rs` is a read-only bench check of a chip (revision,
+  serial, lock state, slot configuration, self-test):
+  `cargo build --release --example atecc608_probe`.
+
+### Registering a device
+
+The device logs what to register on every boot:
+
+```text
+REGISTER product=vaktus mac=38:18:2B:84:56:F4 atecc_serial=… public_key=<128 hex digits>
+```
+
+Register it with the gateway repository's tool (AWS credentials needed):
+
+```sh
+cargo run -p seed-device --target host-tuple -- \
+    --product vaktus --mac 38:18:2B:84:56:F4 --public-key <128 hex digits>
+```
+
+Until then the registry refuses it (403), and the device retries (1 minute,
+backing off to 15); **Settings → About → Cloud** shows
+`awaiting registration (MAC)`. Other refusals (throttling, a template problem)
+show `provisioning refused: …` with the reason. There is no shared secret: only
+the chip holding the registered key can enrol. The stored identity remembers
+which key it was issued for, so a unit whose ATECC608B module is replaced
+provisions again (register the new key first).
+
+### OTA updates
+
+Releases go to `s3://<firmware bucket>/vaktus/firmware_vX.Y.Z.bin`; the
+platform turns each upload into an AWS IoT Job for the `esp32-ztp-vaktus-fleet`
+thing group only. The device runs the Jobs state machine shared with the
+gateway (`iot-jobs`): it downloads the image over HTTPS into the inactive slot,
+restarts into it, and the **new** image reports SUCCEEDED once it has reached
+AWS IoT and marked itself valid. An image that does not get there within 10
+minutes restarts, and the bootloader rolls it back; the previous image then
+reports FAILED, `rolled back`. A job whose document names another product is
+refused without a download.
+
+### Flash layout
+
+[`partitions.csv`](partitions.csv), 4 MB:
+
+| Partition | Offset | Size | |
+| --- | --- | --- | --- |
+| `nvs` | `0x9000` | 24 KiB | WiFi, calibration, location, prayer cache, cloud identity, pending OTA job |
+| `otadata` | `0xf000` | 8 KiB | which slot boots |
+| `phy_init` | `0x11000` | 4 KiB | RF calibration |
+| `ota_0` / `ota_1` | `0x20000` / `0x210000` | 1984 KiB each | application slots (image ≈ 1.6 MB) |
+
+OTA never rewrites the partition table or the bootloader, so both are frozen
+for units in the field.
+
+### Moving a unit to the OTA layout
+
+Units flashed before v0.8 have a single `factory` partition. Move them over
+once, over USB; `nvs` keeps its place, so their settings survive:
+
+```sh
+cargo build --release
+espflash flash --bootloader target/bootloader.bin --partition-table partitions.csv \
+    --target-app-partition ota_0 --erase-parts otadata \
+    target/xtensa-esp32-espidf/release/namaz-vakti
+```
+
+`--bootloader` matters: espflash's bundled bootloader has no OTA rollback.
+`--erase-parts otadata` matters on every USB flash, not only this one: after
+an OTA update otadata points at `ota_1`, and without the erase the bootloader
+keeps booting that instead of what was just written to `ota_0`. The
+`cargo run` runner passes all of these; [`espflash.toml`](espflash.toml) only
+covers the bootloader and the partition table.
+
+### Build configuration
+
+`build.rs` reads the platform's settings from AWS SSM with the `aws` CLI
+(credentials from `aws-env.sh`, see `aws-env.sh.example`, or the environment):
+the shared claim certificate and key into `certs/` and the IoT endpoint and the
+`vaktus` provisioning template into `cfg.toml`, all gitignored. Without SSM
+access the build still succeeds and the cloud link stays off.
+
+The `iot-jobs` crate comes from the gateway repository through git. If your git
+configuration rewrites GitHub HTTPS URLs to SSH (`url.….insteadOf`), let Cargo
+use the git CLI: `export CARGO_NET_GIT_FETCH_WITH_CLI=true`.
 
 ## Rust / ESP-IDF toolchain setup
 
@@ -361,9 +496,16 @@ wifi_psk = "YOUR_WIFI_PASSWORD"
 ```sh
 . ~/export-esp.sh
 cargo build --release
-espflash flash --port /dev/ttyUSB0 target/xtensa-esp32-espidf/release/namaz-vakti
+cargo run --release      # flashes (bootloader, partition table, ota_0) and opens the monitor
+# or by hand:
+espflash flash --port /dev/ttyUSB0 --bootloader target/bootloader.bin \
+    --partition-table partitions.csv --target-app-partition ota_0 --erase-parts otadata \
+    target/xtensa-esp32-espidf/release/namaz-vakti
 espflash monitor --port /dev/ttyUSB0   # optional: view logs over serial
 ```
+
+A unit still on the old single-app layout needs the one-time move in
+[Moving a unit to the OTA layout](#moving-a-unit-to-the-ota-layout).
 
 `--port` can be omitted — `espflash flash` will prompt you to pick from the
 detected ports if there's ambiguity. To find it yourself:

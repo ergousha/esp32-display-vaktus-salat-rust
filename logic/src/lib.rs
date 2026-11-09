@@ -8,9 +8,12 @@
 //! depends on this crate via a path dependency and re-exports the bits it
 //! needs from `src/time_utils.rs` and `src/prayer.rs`.
 
+pub mod cloud;
+pub mod csr;
 pub mod language;
 pub mod location;
 pub mod prayer_times;
+pub mod secure_element;
 pub mod time_utils;
 pub mod touch_calibration;
 pub mod wifi_credentials;

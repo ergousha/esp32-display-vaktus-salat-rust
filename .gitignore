@@ -6,3 +6,6 @@
 /logic/target
 /logic/Cargo.lock
 .DS_Store
+/certs/claim.crt.pem
+/certs/claim.private.key
+/aws-env.sh

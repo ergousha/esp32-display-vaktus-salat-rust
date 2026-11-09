@@ -15,3 +15,44 @@ CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
 # Needed for esp_crt_bundle_attach (HTTPS certificate verification against the
 # ezanvakti.emushaf.net API)
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# --- Flash layout: two OTA slots on the 4 MB part ---
+# partitions.csv is the single source of truth: copied into the esp-idf-sys
+# project by the ESP_IDF_GLOB_* vars in .cargo/config.toml, and passed to
+# espflash by the runner and espflash.toml.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+CONFIG_PARTITION_TABLE_MD5=y
+
+# --- OTA safety ---
+# The bootloader marks a freshly installed slot PENDING_VERIFY and goes back to
+# the previous one if the app restarts before confirming itself. cloud::run
+# confirms only once it reached AWS IoT; cloud::start_rollback_guard restarts
+# an image that does not within 10 minutes.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# --- AWS IoT over MQTT/TLS ---
+CONFIG_ESP_TLS_INSECURE=n
+# Free mbedTLS record buffers between records: prayer-time HTTPS, the MQTT
+# session and an OTA download can be open at once on a part without PSRAM.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+
+# --- ATECC608B secure element (I2C header: SDA GPIO32, SCL GPIO25) ---
+# TrustCustom: the firmware sets the chip up itself; slot 0 holds the device key.
+CONFIG_ATECC608A_TCUSTOM=y
+CONFIG_ATCA_I2C_SDA_PIN=32
+CONFIG_ATCA_I2C_SCL_PIN=25
+CONFIG_ATCA_I2C_ADDRESS=0xC0
+# esp-idf-hal links the legacy I2C driver, and ESP-IDF aborts at boot if the new
+# one is linked as well, so CryptoAuthLib must use the legacy one too.
+CONFIG_ATCA_I2C_USE_LEGACY_DRIVER=y
+# esp-tls signs the TLS handshake with the slot-0 key (use_secure_element).
+CONFIG_ESP_TLS_USE_SECURE_ELEMENT=y
+CONFIG_ATCA_MBEDTLS_ECDSA=y
+
+# --- Memory (no PSRAM; ~57 KB free with the cloud link up) ---
+# Static WiFi RX buffers are reserved for good (1.6 KB each, default 10). Six
+# keep the download rate of an OTA image well above what flash writes take.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
