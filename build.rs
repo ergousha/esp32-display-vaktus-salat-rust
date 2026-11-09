@@ -158,12 +158,12 @@ fn fetch_ssm_parameter(name: &str, decrypt: bool) -> Option<String> {
 }
 
 /// Sets `key = "value"` lines in the `[namaz-vakti]` section of `cfg.toml`,
-/// creating the file (from `cfg.toml.example`) or the lines as needed.
+/// creating the file (with just that section) or the lines as needed.
 fn update_cfg_toml(values: &[(&str, &str)]) {
     let path = manifest_path("cfg.toml");
-    let content = std::fs::read_to_string(&path)
-        .or_else(|_| std::fs::read_to_string(manifest_path("cfg.toml.example")))
-        .unwrap_or_else(|_| format!("{SECTION}\n"));
+    // Not from cfg.toml.example: its placeholder WiFi credentials would be
+    // compiled in and seeded into NVS on a fresh device.
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|_| format!("{SECTION}\n"));
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     if !lines.iter().any(|l| l.trim() == SECTION) {
         lines.insert(0, SECTION.to_string());

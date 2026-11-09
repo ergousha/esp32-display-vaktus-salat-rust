@@ -5,8 +5,13 @@ target = "xtensa-esp32-espidf"
 linker = "ldproxy"
 # --bootloader: the one this build produced (build.rs copies it there), not
 # espflash's bundled one, which has no OTA rollback.
-runner = "espflash flash --bootloader target/bootloader.bin --partition-table partitions.csv --target-app-partition ota_0 --monitor"
-rustflags = ["--cfg", "espidf_time64"]
+# --erase-parts otadata: after an OTA update otadata points at ota_1; without
+# the erase, the bootloader would keep booting that and ignore what was just
+# written to ota_0.
+runner = "espflash flash --bootloader target/bootloader.bin --partition-table partitions.csv --target-app-partition ota_0 --erase-parts otadata --monitor"
+# --wrap=atcab_release: esp-tls's call that frees CryptoAuthLib's global device
+# at the end of every TLS session becomes a no-op (src/cloud/atecc.rs).
+rustflags = ["--cfg", "espidf_time64", "-C", "link-arg=-Wl,--wrap=atcab_release"]
 
 [unstable]
 build-std = ["std", "panic_abort"]

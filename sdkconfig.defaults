@@ -51,3 +51,8 @@ CONFIG_ATCA_I2C_USE_LEGACY_DRIVER=y
 # esp-tls signs the TLS handshake with the slot-0 key (use_secure_element).
 CONFIG_ESP_TLS_USE_SECURE_ELEMENT=y
 CONFIG_ATCA_MBEDTLS_ECDSA=y
+
+# --- Memory (no PSRAM; ~57 KB free with the cloud link up) ---
+# Static WiFi RX buffers are reserved for good (1.6 KB each, default 10). Six
+# keep the download rate of an OTA image well above what flash writes take.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6

@@ -13,6 +13,7 @@ pub mod csr;
 pub mod language;
 pub mod location;
 pub mod prayer_times;
+pub mod secure_element;
 pub mod time_utils;
 pub mod touch_calibration;
 pub mod wifi_credentials;

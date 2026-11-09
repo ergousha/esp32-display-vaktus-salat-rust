@@ -105,6 +105,19 @@ pub fn parse_registered(payload: &[u8]) -> Result<String, String> {
     Ok(resp.thing_name)
 }
 
+/// True when a `RegisterThing` `/rejected` answer means the pre-provisioning
+/// hook refused the device (403): not registered yet, or registered with
+/// another key or product. Anything else (throttling, a template error) is
+/// not something registering would fix.
+pub fn registration_refused(payload: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Status {
+        #[serde(rename = "statusCode")]
+        status_code: u32,
+    }
+    serde_json::from_slice::<Status>(payload).is_ok_and(|s| s.status_code == 403)
+}
+
 /// A `/rejected` answer of either provisioning API, as one line.
 pub fn describe_rejection(payload: &[u8]) -> String {
     #[derive(Deserialize, Default)]
@@ -202,6 +215,18 @@ mod tests {
             "38182B8456F4"
         );
         assert!(parse_registered(br#"{"thingName":""}"#).is_err());
+    }
+
+    #[test]
+    fn only_a_403_means_the_device_is_not_registered() {
+        assert!(registration_refused(
+            br#"{"statusCode":403,"errorCode":"AccessDenied","errorMessage":"Access Denied"}"#
+        ));
+        assert!(!registration_refused(br#"{"statusCode":429,"errorCode":"ThrottlingException","errorMessage":"Rate exceeded"}"#));
+        assert!(!registration_refused(
+            br#"{"statusCode":400,"errorCode":"InvalidParameters","errorMessage":"x"}"#
+        ));
+        assert!(!registration_refused(b"garbage"));
     }
 
     #[test]

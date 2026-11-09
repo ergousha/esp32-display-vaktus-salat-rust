@@ -24,6 +24,11 @@ use esp_idf_svc::sys::{
 /// QoS 1 for everything: AWS IoT does not support QoS 2.
 pub const QOS1: i32 = 1;
 
+/// Largest message reassembled from chunks. A Jobs document with a presigned
+/// URL is ~3 KB; the length comes from the broker, and an allocation failure
+/// inside the esp-mqtt task would abort the firmware.
+const MAX_MESSAGE: usize = 16 * 1024;
+
 /// An event copied out of the esp-mqtt task.
 #[derive(Debug)]
 pub enum MqttEvent {
@@ -237,6 +242,12 @@ unsafe extern "C" fn on_event(
             };
             let data = bytes(ev.data, ev.data_len);
             let total = ev.total_data_len.max(0) as usize;
+            if total > MAX_MESSAGE {
+                if ev.current_data_offset == 0 {
+                    log::warn!("dropping a {total} B MQTT message (limit {MAX_MESSAGE} B)");
+                }
+                return;
+            }
             let Ok(mut partial) = ctx.partial.lock() else {
                 return;
             };
