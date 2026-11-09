@@ -65,8 +65,8 @@ impl Calibration {
     pub fn to_bytes(&self) -> [u8; 24] {
         let mut out = [0u8; 24];
         let fields = [self.a, self.b, self.c, self.d, self.e, self.f];
-        for (chunk, v) in out.chunks_exact_mut(4).zip(fields) {
-            chunk.copy_from_slice(&v.to_le_bytes());
+        for (chunk, v) in out.as_chunks_mut::<4>().0.iter_mut().zip(fields) {
+            *chunk = v.to_le_bytes();
         }
         out
     }

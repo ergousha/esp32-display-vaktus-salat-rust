@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use embedded_graphics::{
     mono_font::{
-        iso_8859_9::{FONT_9X15, FONT_9X18_BOLD},
+        iso_8859_9::FONT_9X18_BOLD,
         MonoTextStyle,
     },
     prelude::*,
@@ -1284,47 +1284,20 @@ where
         .into_styled(PrimitiveStyle::with_fill(col_bg()))
         .draw(display)
         .map_err(|_| anyhow::anyhow!("draw error"))?;
-    if lang.is_rtl() {
-        // Keep the numeric city/date/clock left-to-right in the mono font
-        // (reversing digits would corrupt them) and render the Arabic weekday
-        // on the right, shaped, before the gear icon.
-        let latin = format!(
-            "{city}   {date_part}   {:02}:{:02}",
-            local.hour, local.minute
-        );
-        Text::new(
-            &latin,
-            Point::new(10, 20),
-            MonoTextStyle::new(&FONT_9X15, col_dim()),
-        )
-        .draw(display)
-        .map_err(|_| anyhow::anyhow!("draw error"))?;
-        let weekday = localize_weekday(local.weekday_name(), lang);
-        text::draw_line(
-            display,
-            weekday,
-            Point::new(438, 20),
-            text::HAlign::Right,
-            col_dim(),
-            lang,
-            text::Size::Small,
-        )?;
-    } else {
-        let weekday = localize_weekday(local.weekday_name(), lang);
-        let header_str = format!(
-            "{city}   {date_part}   {weekday}   {:02}:{:02}",
-            local.hour, local.minute
-        );
-        text::draw_line(
-            display,
-            &header_str,
-            Point::new(10, 20),
-            text::HAlign::Left,
-            col_dim(),
-            lang,
-            text::Size::Small,
-        )?;
-    }
+    let weekday = localize_weekday(local.weekday_name(), lang);
+    let header_str = format!(
+        "{city}   {date_part}   {weekday}   {:02}:{:02}",
+        local.hour, local.minute
+    );
+    text::draw_line(
+        display,
+        &header_str,
+        Point::new(10, 20),
+        text::HAlign::Left,
+        col_dim(),
+        lang,
+        text::Size::Small,
+    )?;
     // Gear icon lives in the header band and must be repainted after the header
     // clears its region each minute.
     settings_screen::draw_gear_icon(display)?;

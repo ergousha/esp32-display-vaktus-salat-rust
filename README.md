@@ -231,25 +231,18 @@ The pure affine solve/apply math (`Calibration`, least-squares `solve_affine`,
     (the dashboard only shows minute resolution) and clears only its own
     small bounding box before redrawing, instead of the whole screen.
 - **Fonts & localization**: the UI renders in one of three languages — Türkçe,
-  English or العربية (Arabic) — chosen from the settings screen and persisted
-  to NVS (namespace `settings`, keys `lang`/`datemode` as single bytes; see
+  English or Nederlands — chosen from the settings screen and persisted to NVS
+  (namespace `settings`, keys `lang`/`datemode` as single bytes; see
   [`src/settings.rs`](src/settings.rs)). The `Language` enum and every
   translation table live in the host-testable
   [`namaz-vakti-logic`](logic/src/language.rs) crate.
-  - **Latin (Türkçe/English)**: embedded-graphics' `mono_font::iso_8859_9`
-    (Latin-5) fonts, not the default `ascii` set — `ascii` only covers
-    0x20-0x7E and can't render Turkish letters (İ, ı, Ş, ş, Ğ, ğ, Ö, ö, Ü, ü,
-    Ç, ç) at all.
-  - **Arabic**: embedded-graphics mono fonts have no Arabic glyphs and do no
-    contextual joining or RTL layout, so Arabic goes through a two-step path:
-    the fixed label set is shaped by a small pure-Rust shaper
-    ([`logic/src/arabic.rs`](logic/src/arabic.rs) — contextual
-    isolated/initial/medial/final forms + lam-alef ligature, then reversed to
-    visual right-to-left order) and drawn with the `u8g2-fonts` renderer's
-    `unifont_t_arabic` / `10x20_t_arabic` faces, which cover the Arabic
-    Presentation Forms-B block. Numeric fields (clock, date) stay in the mono
-    font so digits aren't reversed. See [`src/text.rs`](src/text.rs) for the
-    script-switching draw helper.
+  - All three are Latin scripts, drawn with embedded-graphics'
+    `mono_font::iso_8859_9` (Latin-5) fonts, not the default `ascii` set —
+    `ascii` only covers 0x20-0x7E and can't render Turkish letters (İ, ı, Ş, ş,
+    Ğ, ğ, Ö, ö, Ü, ü, Ç, ç) at all. See [`src/text.rs`](src/text.rs).
+  - An Arabic UI option existed up to v0.7.0. It was removed to free flash for
+    the two OTA slots a 4 MB part has room for. A device that still has it
+    saved (byte `2`) falls back to Türkçe.
 - **Resilience**: if WiFi fails to connect at boot, the device retries the
   saved credentials a bounded number of times (showing a "reconnecting"
   status when there's cached data to fall back on) and then drops into the
