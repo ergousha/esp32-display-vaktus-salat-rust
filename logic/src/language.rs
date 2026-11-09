@@ -3,20 +3,21 @@
 //!
 //! Lives in the pure `namaz-vakti-logic` crate (like `prayer_times` and
 //! `time_utils`) so the tables can be unit tested on a host toolchain. The
-//! firmware resolves each label through [`Language`] before drawing it; Arabic
-//! strings are returned here in normal logical-order Unicode and shaped for
-//! display by [`crate::arabic`] at render time.
+//! firmware resolves each label through [`Language`] before drawing it. Every
+//! language is written in a Latin script, so all of them render with the same
+//! ISO 8859-9 mono fonts.
 
-/// The three UI languages the dashboard can render in.
+/// The UI languages the dashboard can render in.
 ///
-/// The discriminant doubles as the single-byte value persisted to NVS (see the
-/// firmware's `settings` module), so the numbering must stay stable.
+/// [`Self::to_u8`] is the single-byte value persisted to NVS (see the
+/// firmware's `settings` module), so the numbering must stay stable. Byte `2`
+/// belonged to Arabic, which was removed to free flash for OTA; a device that
+/// still has it stored falls back to the default, like any unknown byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Language {
     Turkish,
     English,
     Nederlands,
-    Arabic,
 }
 
 impl Default for Language {
@@ -32,7 +33,6 @@ impl Language {
         match self {
             Language::Turkish => 0,
             Language::English => 1,
-            Language::Arabic => 2,
             Language::Nederlands => 3,
         }
     }
@@ -41,26 +41,14 @@ impl Language {
     pub fn from_u8(value: u8) -> Self {
         match value {
             1 => Language::English,
-            2 => Language::Arabic,
             3 => Language::Nederlands,
             _ => Language::Turkish,
         }
     }
 
-    /// `true` for right-to-left scripts (only Arabic today). Callers use this to
-    /// decide text alignment and whether to run the Arabic shaper.
-    pub fn is_rtl(self) -> bool {
-        matches!(self, Language::Arabic)
-    }
-
     /// The selectable languages, in the order the settings screen lists them:
-    /// alphabetical by endonym — العربية, English, Nederlands, Türkçe.
-    pub const ALL: [Language; 4] = [
-        Language::Arabic,
-        Language::English,
-        Language::Nederlands,
-        Language::Turkish,
-    ];
+    /// alphabetical by endonym — English, Nederlands, Türkçe.
+    pub const ALL: [Language; 3] = [Language::English, Language::Nederlands, Language::Turkish];
 }
 
 /// The 5 daily prayer names, indexed the same as [`crate::prayer_times`]'s
@@ -70,7 +58,6 @@ pub fn prayer_names(lang: Language) -> [&'static str; 5] {
         Language::Turkish => ["İMSAK", "ÖĞLE", "İKİNDİ", "AKŞAM", "YATSI"],
         Language::English => ["FAJR", "DHUHR", "ASR", "MAGHRIB", "ISHA"],
         Language::Nederlands => ["FAJR", "DHUHR", "ASR", "MAGHRIB", "ISHA"],
-        Language::Arabic => ["الفجر", "الظهر", "العصر", "المغرب", "العشاء"],
     }
 }
 
@@ -104,15 +91,6 @@ pub fn weekday_names(lang: Language) -> [&'static str; 7] {
             "DONDERDAG",
             "VRIJDAG",
             "ZATERDAG",
-        ],
-        Language::Arabic => [
-            "الأحد",
-            "الإثنين",
-            "الثلاثاء",
-            "الأربعاء",
-            "الخميس",
-            "الجمعة",
-            "السبت",
         ],
     }
 }
@@ -367,65 +345,6 @@ pub fn text(lang: Language, msg: Msg) -> &'static str {
         (Language::Nederlands, CalSkipped) => "Kalibratie overgeslagen",
         (Language::Nederlands, CalUsingDefaults) => "Standaardwaarden gebruiken",
         (Language::Nederlands, CalRecalibrating) => "Aanraking opnieuw kalibreren",
-
-        // --- Arabic (logical order; shaped for display by `crate::arabic`) ---
-        (Language::Arabic, AppTitle) => "أوقات الصلاة",
-        (Language::Arabic, Starting) => "جاري البدء...",
-        (Language::Arabic, WifiConnecting) => "جاري الاتصال بالواي فاي...",
-        (Language::Arabic, WifiConnectFailed) => "فشل الاتصال بالواي فاي",
-        (Language::Arabic, Restarting) => "جاري إعادة التشغيل...",
-        (Language::Arabic, TimeSyncing) => "جاري مزامنة الساعة...",
-        (Language::Arabic, PrayerDownloading) => "جاري تنزيل أوقات الصلاة...",
-        (Language::Arabic, PrayerFetchFailed) => "تعذر جلب أوقات الصلاة",
-        (Language::Arabic, RetryingInBackground) => "ستتم إعادة المحاولة في الخلفية...",
-        (Language::Arabic, PrayerDownloadFailed) => "فشل تنزيل أوقات الصلاة",
-        (Language::Arabic, Retrying) => "جاري إعادة المحاولة...",
-        (Language::Arabic, PrayerDataMissing) => "بيانات الصلاة ناقصة، جارٍ التحديث...",
-        (Language::Arabic, NextPrayer) => "الصلاة القادمة:",
-        (Language::Arabic, SettingsTitle) => "الإعدادات",
-        (Language::Arabic, LanguageHeading) => "اللغة",
-        (Language::Arabic, DateHeading) => "التاريخ",
-        (Language::Arabic, DateMiladi) => "ميلادي",
-        (Language::Arabic, DateHijri) => "هجري",
-        (Language::Arabic, SystemHeading) => "النظام",
-        (Language::Arabic, WifiMenu) => "واي فاي",
-        (Language::Arabic, RecalibrateTouch) => "معايرة",
-        (Language::Arabic, AboutMenu) => "حول",
-        (Language::Arabic, LocationMenu) => "الموقع",
-        (Language::Arabic, AboutTitle) => "حول الجهاز",
-        (Language::Arabic, AboutHardware) => "العتاد",
-        (Language::Arabic, AboutFirmware) => "البرنامج",
-        (Language::Arabic, AboutMac) => "عنوان MAC",
-        (Language::Arabic, LocationTitle) => "الموقع",
-        (Language::Arabic, LocationSearchCountry) => "ابحث عن دولة",
-        (Language::Arabic, LocationSearchCity) => "ابحث عن مدينة",
-        (Language::Arabic, LocationSearchDistrict) => "ابحث عن منطقة",
-        (Language::Arabic, LocationLoading) => "جاري التحميل...",
-        (Language::Arabic, LocationNoResults) => "لا توجد نتائج",
-        (Language::Arabic, LocationError) => "تعذر تحميل بيانات الموقع",
-        (Language::Arabic, LocationSaving) => "جاري تحديث أوقات الصلاة...",
-        (Language::Arabic, LocationSaved) => "تم حفظ الموقع",
-        (Language::Arabic, LocationMore) => "ضيّق نطاق البحث",
-        (Language::Arabic, WifiSetupTitle) => "إعداد الواي فاي",
-        (Language::Arabic, WifiScanning) => "جاري البحث عن الشبكات...",
-        (Language::Arabic, WifiSelectNetwork) => "اختر شبكتك",
-        (Language::Arabic, WifiEnterManually) => "إدخال يدوي",
-        (Language::Arabic, WifiRescan) => "إعادة البحث",
-        (Language::Arabic, WifiNoNetworks) => "لم يتم العثور على شبكات",
-        (Language::Arabic, WifiEnterSsid) => "اسم الشبكة",
-        (Language::Arabic, WifiEnterPassword) => "كلمة المرور",
-        (Language::Arabic, WifiReconnecting) => "جاري إعادة الاتصال...",
-        (Language::Arabic, WifiPasswordTooShort) => "كلمة المرور قصيرة جدًا (8 على الأقل)",
-        (Language::Arabic, KeySpace) => "مسافة",
-        (Language::Arabic, KeyDone) => "موافق",
-        (Language::Arabic, CalTitle) => "معايرة اللمس",
-        (Language::Arabic, CalTapCrosshair) => "المس التقاطع بالقلم",
-        (Language::Arabic, CalComplete) => "اكتملت المعايرة",
-        (Language::Arabic, CalFailed) => "فشلت المعايرة",
-        (Language::Arabic, CalRetry) => "يرجى إعادة المحاولة",
-        (Language::Arabic, CalSkipped) => "تم تخطي المعايرة",
-        (Language::Arabic, CalUsingDefaults) => "استخدام القيم الافتراضية",
-        (Language::Arabic, CalRecalibrating) => "إعادة معايرة اللمس",
     }
 }
 
@@ -436,7 +355,6 @@ pub fn language_label(lang: Language) -> &'static str {
         Language::Turkish => "Türkçe",
         Language::English => "English",
         Language::Nederlands => "Nederlands",
-        Language::Arabic => "العربية",
     }
 }
 
@@ -458,10 +376,9 @@ mod tests {
     }
 
     #[test]
-    fn only_arabic_is_rtl() {
-        assert!(Language::Arabic.is_rtl());
-        assert!(!Language::Turkish.is_rtl());
-        assert!(!Language::English.is_rtl());
+    fn retired_arabic_byte_falls_back_to_turkish() {
+        assert_eq!(Language::from_u8(2), Language::Turkish);
+        assert!(Language::ALL.iter().all(|l| l.to_u8() != 2));
     }
 
     #[test]

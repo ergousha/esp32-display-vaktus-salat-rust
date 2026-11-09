@@ -45,8 +45,8 @@ enum KeyAction {
 struct PlacedKey {
     action: KeyAction,
     label: String,
-    /// Script the label is shaped in — Latin (English) for the character keys
-    /// so ASCII always renders, the active language for the localized controls.
+    /// Language the label is written in — English for the character keys, the
+    /// active language for the localized controls.
     label_lang: Language,
     x: i32,
     y: i32,

@@ -90,10 +90,8 @@ where
     Ok(())
 }
 
-/// Draws one labelled field. The localized label follows the active script's
-/// alignment (right-aligned + shaped for Arabic); the value is a Latin/ASCII
-/// string (model / version / MAC), so it's drawn in the Latin font, aligned to
-/// match the label's edge.
+/// Draws one labelled field: the localized label, with the value (model /
+/// version / MAC) left-aligned under it.
 fn draw_field<D>(
     display: &mut D,
     lang: Language,
@@ -105,19 +103,12 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let y = FIRST_ROW_Y + row * ROW_PITCH;
-    let (label_x, value_x, align, value_lang) = if lang.is_rtl() {
-        // Right edge of the content column; Latin value stays left-to-right but
-        // right-anchored so it lines up under the Arabic label.
-        (480 - CONTENT_X, 480 - CONTENT_X, HAlign::Right, Language::English)
-    } else {
-        (CONTENT_X, CONTENT_X, HAlign::Left, Language::English)
-    };
 
     text::draw_line(
         display,
         language::text(lang, label),
-        Point::new(label_x, y),
-        align,
+        Point::new(CONTENT_X, y),
+        HAlign::Left,
         crate::col_dim(),
         lang,
         text::Size::Small,
@@ -125,10 +116,10 @@ where
     text::draw_line(
         display,
         value,
-        Point::new(value_x, y + 26),
-        align,
+        Point::new(CONTENT_X, y + 26),
+        HAlign::Left,
         crate::col_text(),
-        value_lang,
+        Language::English,
         text::Size::Medium,
     )?;
     Ok(())

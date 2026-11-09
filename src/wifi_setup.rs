@@ -384,16 +384,11 @@ where
         .draw(display)
         .map_err(|_| anyhow::anyhow!("draw error"))?;
 
-    let (tx, align) = if label_lang.is_rtl() {
-        (ROW_X + ROW_W as i32 - 12, HAlign::Right)
-    } else {
-        (ROW_X + 12, HAlign::Left)
-    };
     text::draw_line(
         display,
         label,
-        Point::new(tx, y + 20),
-        align,
+        Point::new(ROW_X + 12, y + 20),
+        HAlign::Left,
         if accent {
             crate::col_accent()
         } else {

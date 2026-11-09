@@ -200,15 +200,8 @@ where
         text::Size::Medium,
     )?;
 
-    // Section headings, aligned to the option column (flipped for RTL).
-    let (heading_x, heading_align) = if lang.is_rtl() {
-        (
-            box_x(Language::ALL.len() as i32 - 1) + BOX_W as i32,
-            HAlign::Right,
-        )
-    } else {
-        (BOX_X0, HAlign::Left)
-    };
+    // Section headings, aligned to the option column.
+    let (heading_x, heading_align) = (BOX_X0, HAlign::Left);
 
     text::draw_line(
         display,
@@ -219,7 +212,7 @@ where
         lang,
         text::Size::Small,
     )?;
-    // Language options: each label is written in its own script.
+    // Language options: each label is the language's own name (endonym).
     for (col, opt) in Language::ALL.iter().enumerate() {
         draw_option(
             display,
@@ -324,8 +317,8 @@ where
     Ok(())
 }
 
-/// Draws one selectable option box. `label_lang` selects the script the label
-/// is shaped in (language options render their own endonym; date options use
+/// Draws one selectable option box. `label_lang` is the language the label is
+/// written in (language options render their own endonym; date options use
 /// the active language).
 fn draw_option<D>(
     display: &mut D,
