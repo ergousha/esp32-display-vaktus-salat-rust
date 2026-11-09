@@ -10,3 +10,8 @@
 [namaz-vakti]
 wifi_ssid = "YOUR_WIFI_SSID"
 wifi_psk = "YOUR_WIFI_PASSWORD"
+
+# Written by build.rs from AWS SSM (iot-platform-infra) on every build; set
+# them by hand only without SSM access. Empty: the cloud link stays off.
+# iot_endpoint = "xxxxxxxxxxxxxx-ats.iot.eu-central-1.amazonaws.com"
+# provisioning_template = "esp32-ztp-vaktus-fleet-template"

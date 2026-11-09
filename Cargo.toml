@@ -28,6 +28,17 @@ serde_json = "1"
 anyhow = "1"
 toml-cfg = "0.2"
 namaz-vakti-logic = { path = "logic" }
+# The AWS IoT Jobs OTA protocol, shared with the OPC UA gateway (host-tested
+# there). Pinned: Cargo.lock is not committed in this repository.
+iot-jobs = { git = "https://github.com/ergousha/esp32-opcua-gateway-rust", rev = "caef958914cec0117dbe8f323b8a0b3fcb26d1d6" }
 
 [build-dependencies]
 embuild = "0.33"
+
+# Microchip CryptoAuthLib for the ATECC608B (TrustCustom). The bindings cover
+# the chip calls the firmware makes itself (src/cloud/atecc.rs); TLS signing
+# goes through esp-tls. A change here needs `cargo clean -p esp-idf-sys --release`.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-cryptoauthlib", version = "3.7.9~2" }
+bindings_header = "src/atca_bindings.h"
+bindings_module = "atca"

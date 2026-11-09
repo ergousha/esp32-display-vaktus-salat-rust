@@ -1,4 +1,5 @@
 mod about;
+mod cloud;
 mod cache;
 mod framebuf;
 mod keyboard;
@@ -68,6 +69,12 @@ pub struct Config {
     wifi_ssid: &'static str,
     #[default("")]
     wifi_psk: &'static str,
+    /// AWS IoT endpoint and provisioning template; build.rs writes both from
+    /// SSM (iot-platform-infra). Empty: the cloud link stays off.
+    #[default("")]
+    iot_endpoint: &'static str,
+    #[default("")]
+    provisioning_template: &'static str,
 }
 
 /// Which calendar the header's date is shown in. Chosen from the settings
@@ -176,6 +183,9 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
+    // Before anything that can block (WiFi setup waits for a person): a new
+    // OTA image that never reaches AWS IoT must still be rolled back.
+    cloud::start_rollback_guard();
 
     // --- Persisted UI settings (language + header date mode) ---
     // Loaded before the first splash so every status message renders in the
@@ -382,6 +392,13 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(250));
     }
     log::info!("SNTP sync status: {:?}", sntp.get_sync_status());
+
+    // --- Cloud link (AWS IoT: provisioning, OTA updates, shadow) ---
+    // Runs on its own thread; the dashboard never waits for it.
+    match wifi.wifi().sta_netif().get_mac() {
+        Ok(mac) => cloud::spawn(nvs.clone(), mac),
+        Err(e) => log::error!("no station MAC, cloud link not started: {e:?}"),
+    }
 
     // --- Prayer time data: the NVS cache (loaded above) lets a reboot show the
     // dashboard immediately instead of blocking on a fresh HTTPS fetch ---

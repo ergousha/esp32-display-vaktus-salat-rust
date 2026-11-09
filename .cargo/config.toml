@@ -3,7 +3,9 @@ target = "xtensa-esp32-espidf"
 
 [target.'cfg(target_os = "espidf")']
 linker = "ldproxy"
-runner = "espflash flash --monitor"
+# --bootloader: the one this build produced (build.rs copies it there), not
+# espflash's bundled one, which has no OTA rollback.
+runner = "espflash flash --bootloader target/bootloader.bin --partition-table partitions.csv --target-app-partition ota_0 --monitor"
 rustflags = ["--cfg", "espidf_time64"]
 
 [unstable]
@@ -13,3 +15,11 @@ build-std = ["std", "panic_abort"]
 MCU = "esp32"
 ESP_IDF_VERSION = "v5.5.3"
 ESP_IDF_TOOLS_INSTALL_DIR = "workspace"
+
+# Copy partitions.csv into the esp-idf-sys CMake project dir so that
+# CONFIG_PARTITION_TABLE_CUSTOM_FILENAME resolves (ESP-IDF resolves it against
+# its PROJECT_DIR, esp-idf-sys's OUT_DIR). The leading `/` anchors the pattern
+# to this directory: unanchored it also matches the ESP-IDF examples under
+# .embuild/ and earlier OUT_DIRs under target/, nesting deeper every build.
+ESP_IDF_GLOB_PARTITIONS_BASE = { value = ".", relative = true }
+ESP_IDF_GLOB_PARTITIONS_0 = "/partitions.csv"

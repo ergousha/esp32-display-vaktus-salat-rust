@@ -1,0 +1,7 @@
+# Read by `espflash flash` (and `cargo run`) when run from the repository root.
+[idf_format_args]
+# The bootloader this project builds (build.rs copies it here). espflash's
+# bundled one has no OTA rollback: a bad OTA image would boot-loop instead of
+# being rolled back.
+bootloader = "target/bootloader.bin"
+partition_table = "partitions.csv"
