@@ -41,27 +41,21 @@ Security vulnerability scanning:
 Triggers on: `push` to main/develop, `pull_request` to main/develop, weekly schedule
 
 #### `release.yml`
-Release and OTA delivery, as in the OPC UA gateway:
-- **release-please** keeps a release PR up to date from the conventional
-  commits on `main` (`feat:` → minor, `fix:` → patch while below 1.0, see
-  `release-please-config.json`). Merging it bumps `Cargo.toml`, updates
-  `CHANGELOG.md`, tags `vX.Y.Z` and creates the GitHub Release.
-- **firmware** then builds that release with no AWS credentials and no
-  secrets (`platform.toml` only, `FW_VERSION` from the tag), scans the image
-  (`scripts/scan-image.py`), and only then assumes the `vaktus` CI role of
-  iot-platform through GitHub OIDC to upload it to
-  `s3://<bucket>/vaktus/firmware_vX.Y.Z.bin`. That upload creates the AWS IoT
-  Job for the `esp32-ztp-vaktus-canary` group.
-- Until releases are signed (platform Phase 3), images go only to the bucket.
+Every push to `main` calls the platform's reusable release workflow
+(`ergousha/iot-device-sdk/.github/workflows/firmware-release.yml`, pinned by
+commit SHA; Dependabot bumps it):
+- **version**: the next semver from the conventional commits since the last
+  `v*` tag. Only `feat:` (minor) and `fix:` (patch) release; a breaking change
+  is a minor bump while below 1.0.
+- **build**: no secrets, no AWS, no cache. `app.bin`, `factory.bin` (first
+  flash), `manifest.json`, an SBOM; the slot-size check and the image scan.
+- **publish** (Environment `release`): signs the manifest, tags `vX.Y.Z`,
+  creates a GitHub pre-release with the images, and uploads them to
+  `s3://<bucket>/releases/vaktus/X.Y.Z/` through the OIDC role.
+- **notify**: on failure, an issue "release vX.Y.Z failed".
 
-Triggers on: `push` to main
-
-##### Release process: one-time setup
-- Repository variables: `AWS_ROLE_ARN`
-  (`arn:aws:iam::<account>:role/esp32-ztp-vaktus-github-actions-role`),
-  `AWS_FIRMWARE_BUCKET`, `RELEASE_PLEASE_APP_CLIENT_ID`.
-- Repository secret `RELEASE_PLEASE_APP_PRIVATE_KEY`, and the release-please
-  GitHub App installed on this repository (the same app as the gateway's).
+The platform's OTA controller takes it from there: canary, soak, fleet, with
+an email at each step. There is no release PR and no GitHub App.
 
 ### Automation
 
@@ -149,7 +143,7 @@ Configure on GitHub via **Settings → Branches → Branch protection rules**:
 | rust.yml | ✅ | ✅ | - | - |
 | esp32-build.yml | ✅ | ✅ | - | - |
 | security-audit.yml | ✅ | ✅ | Weekly | - |
-| release.yml | ✅ (main) | - | - | - |
+| release.yml | ✅ (main, every push) | - | - | - |
 
 ## Local Development
 
@@ -188,15 +182,32 @@ PRs are labeled with `dependencies` tag and assigned to `eakin`.
 
 ## Release Process
 
-Releases are cut by release-please, not by pushing tags (see `release.yml`
-above):
+Merge a pull request whose title is a conventional commit: `fix: ...` releases
+a patch, `feat: ...` a minor version, and anything else (`docs:`, `chore:`,
+`ci:`, `refactor:`) nothing. Dependabot's cargo bumps are `fix(deps):`, so a
+merged dependency update ships; its GitHub Actions bumps are `ci:` and do not.
+Every release goes to the canary first; the fleet follows after the soak
+without a click. `iot-platform/scripts/ota.sh status vaktus` shows where it
+is; `hold`, `promote`, `rerun` and `rollback` are the overrides.
 
-1. Merge pull requests with conventional commit titles (`feat:`, `fix:`, ...).
-2. release-please opens or updates a release PR (`chore(main): release X.Y.Z`)
-   that bumps `Cargo.toml` and `CHANGELOG.md`.
-3. Merging that PR tags `vX.Y.Z`, creates the GitHub Release, and the firmware
-   job uploads the image to `s3://<bucket>/vaktus/`, which updates the fleet
-   over the air.
+### One-time setup
+
+1. Repository variables, from the iot-platform Terraform outputs:
+   ```bash
+   gh variable set AWS_ROLE_ARN --body "$(terraform -chdir=../iot-platform-infra output -json github_actions_role_arns | jq -r .vaktus)"
+   gh variable set AWS_FIRMWARE_BUCKET --body "$(terraform -chdir=../iot-platform-infra output -raw firmware_bucket_name)"
+   ```
+2. Signing keys and Environment `release` (main only, secret
+   `FIRMWARE_SIGNING_KEY`), from an iot-device-sdk checkout:
+   ```bash
+   scripts/signing-keys.sh ../esp32-display-vaktus-salat-rust
+   ```
+   Commit the `keys/` and `platform.toml` it writes with a `fix:` title.
+3. Optional: `gh variable set IMAGE_SCAN_FORBIDDEN --body "<home SSID>"` makes
+   the image scan fail on that string.
+4. Remove what release-please needed: the `RELEASE_PLEASE_APP_CLIENT_ID`
+   variable, the `RELEASE_PLEASE_APP_PRIVATE_KEY` secret, and the GitHub App
+   itself once no repository uses it.
 
 ## Maintenance
 

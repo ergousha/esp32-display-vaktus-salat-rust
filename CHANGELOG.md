@@ -1,5 +1,10 @@
 # Changelog
 
+From the next release on, release notes are on the repository's GitHub Releases
+(the platform release pipeline writes them from the conventional commits).
+This file keeps the history before that.
+
+
 ## [0.9.1](https://github.com/ergousha/esp32-display-vaktus-salat-rust/compare/v0.9.0...v0.9.1) (2026-11-11)
 
 
