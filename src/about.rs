@@ -24,7 +24,7 @@ use crate::{keyboard, settings_screen, Rgb565};
 const HARDWARE_MODEL: &str = "4.0inch ESP32-32E Display";
 
 /// Firmware version, taken from the crate's build metadata (`Cargo.toml`).
-const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const FIRMWARE_VERSION: &str = env!("FW_VERSION");
 
 // Row layout: a localized label line, then its Latin value just below.
 const CONTENT_X: i32 = 20;

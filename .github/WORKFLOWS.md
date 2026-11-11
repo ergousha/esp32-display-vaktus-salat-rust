@@ -46,14 +46,13 @@ Release and OTA delivery, as in the OPC UA gateway:
   commits on `main` (`feat:` → minor, `fix:` → patch while below 1.0, see
   `release-please-config.json`). Merging it bumps `Cargo.toml`, updates
   `CHANGELOG.md`, tags `vX.Y.Z` and creates the GitHub Release.
-- **firmware** then builds that release with AWS credentials from GitHub OIDC
-  (the `vaktus` CI role of iot-platform-infra), so `build.rs` compiles in the
-  IoT endpoint, the `vaktus` provisioning template and the claim identity from
-  SSM; refuses an image with placeholders; and uploads it to
+- **firmware** then builds that release with no AWS credentials and no
+  secrets (`platform.toml` only, `FW_VERSION` from the tag), scans the image
+  (`scripts/scan-image.py`), and only then assumes the `vaktus` CI role of
+  iot-platform through GitHub OIDC to upload it to
   `s3://<bucket>/vaktus/firmware_vX.Y.Z.bin`. That upload creates the AWS IoT
-  Job that updates the `esp32-ztp-vaktus-fleet` devices over the air.
-- The image holds the claim private key, so it is never attached to the
-  (public) GitHub Release.
+  Job for the `esp32-ztp-vaktus-canary` group.
+- Until releases are signed (platform Phase 3), images go only to the bucket.
 
 Triggers on: `push` to main
 

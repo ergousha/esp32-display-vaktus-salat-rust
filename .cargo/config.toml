@@ -10,7 +10,7 @@ linker = "ldproxy"
 # written to ota_0.
 runner = "espflash flash --bootloader target/bootloader.bin --partition-table partitions.csv --target-app-partition ota_0 --erase-parts otadata --monitor"
 # --wrap=atcab_release: esp-tls's call that frees CryptoAuthLib's global device
-# at the end of every TLS session becomes a no-op (src/cloud/atecc.rs).
+# at the end of every TLS session becomes a no-op (device-sdk, atecc module).
 rustflags = ["--cfg", "espidf_time64", "-C", "link-arg=-Wl,--wrap=atcab_release"]
 
 [unstable]

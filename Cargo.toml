@@ -2,6 +2,7 @@
 name = "namaz-vakti"
 version = "0.8.0"
 edition = "2021"
+license = "MIT"
 resolver = "2"
 rust-version = "1.82"
 
@@ -26,17 +27,16 @@ mipidsi = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-toml-cfg = "0.2"
 namaz-vakti-logic = { path = "logic" }
-# The AWS IoT Jobs OTA protocol, shared with the OPC UA gateway (host-tested
-# there). Pinned: Cargo.lock is not committed in this repository.
-iot-jobs = { git = "https://github.com/ergousha/esp32-opcua-gateway-rust", rev = "caef958914cec0117dbe8f323b8a0b3fcb26d1d6" }
+# The platform device SDK (ergousha/iot-device-sdk): enrolment with the
+# ATECC608B, OTA, the platform shadow, the bench console.
+device-sdk = { git = "https://github.com/ergousha/iot-device-sdk", rev = "db888a821a117448b84a1fa7d292990275d05980", features = ["atecc608"] }
 
 [build-dependencies]
-embuild = "0.33"
+platform-build = { git = "https://github.com/ergousha/iot-device-sdk", rev = "db888a821a117448b84a1fa7d292990275d05980" }
 
 # Microchip CryptoAuthLib for the ATECC608B (TrustCustom). The bindings cover
-# the chip calls the firmware makes itself (src/cloud/atecc.rs); TLS signing
+# the chip calls device-sdk makes itself (its atecc module); TLS signing
 # goes through esp-tls. A change here needs `cargo clean -p esp-idf-sys --release`.
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp-cryptoauthlib", version = "3.7.9~2" }

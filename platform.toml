@@ -1,0 +1,34 @@
+# This product on the Ergousha IoT platform (ergousha/iot-platform), read at
+# build time by platform-build (iot-device-sdk). Everything here is public:
+# images carry no secrets. The claim and Wi-Fi reach a unit only at the bench
+# (`ergo commission`), over the serial console.
+
+[product]
+id = "vaktus"
+chip = "esp32"
+# Frozen: the thing name is this MAC (src/main.rs reads the station MAC).
+mac_type = "wifi_sta"
+# The device key is slot 0 of the ATECC608B on the I2C header.
+key_storage = "atecc608"
+
+[cloud]
+# Compiled-in default; NVS platform/endpoint overrides it.
+endpoint = "a2pw25e7ewpuwe-ats.iot.eu-central-1.amazonaws.com"
+template = "esp32-ztp-vaktus-fleet-template"
+
+[signing]
+# keys/<id>.pub.pem. Releases are signed from Phase 3 of the platform plan;
+# until then the device installs unsigned jobs (never with signed-only).
+keys = []
+
+[flash]
+partitions = "partitions.csv"
+# Rows units in the field already have. A partition table is never rewritten
+# by OTA, so these may not move.
+frozen = [
+  { name = "nvs", offset = 0x9000, size = 0x6000 },
+  { name = "otadata", offset = 0xf000, size = 0x2000 },
+  { name = "phy_init", offset = 0x11000, size = 0x1000 },
+  { name = "ota_0", offset = 0x20000, size = 0x1F0000 },
+  { name = "ota_1", offset = 0x210000, size = 0x1F0000 },
+]
