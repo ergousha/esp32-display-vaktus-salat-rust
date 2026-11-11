@@ -90,5 +90,7 @@ jobs:
             exit 1
           fi
 
+      # Allowed PEM blocks, as in the release workflow: the Amazon root CA and
+      # the signing public keys compiled into the keyring.
       - name: Scan the image for secrets
-        run: python3 scripts/scan-image.py firmware.bin
+        run: python3 scripts/scan-image.py firmware.bin certs/AmazonRootCA1.pem keys/*.pub.pem
