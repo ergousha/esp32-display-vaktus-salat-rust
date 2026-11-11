@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/ergousha/esp32-display-vaktus-salat-rust/compare/v0.9.0...v0.9.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* device SDK 1a6f7d6 (MQTT paused for OTA downloads) ([58a7eec](https://github.com/ergousha/esp32-display-vaktus-salat-rust/commit/58a7eec6fbd2bc93f2f45d9c72e8f3880c5b4d5f))
+
 ## [0.9.0](https://github.com/ergousha/esp32-display-vaktus-salat-rust/compare/v0.8.0...v0.9.0) (2026-11-11)
 
 
