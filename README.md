@@ -200,13 +200,8 @@ src/
 ├── settings_screen.rs  Settings screen: language/date options + the 4 System actions
 ├── keyboard.rs     Shared on-screen keyboard + text-entry screen (WiFi + Location)
 ├── about.rs        About page: hardware model, firmware version, station MAC, cloud status
-├── cloud/          AWS IoT link, on its own thread (see "Cloud link and OTA updates")
-│   ├── mod.rs        boot flow: secure element -> provisioning -> MQTT -> Jobs + shadow
-│   ├── atecc.rs      ATECC608B setup (lock, slot-0 key), public key, CSR signing
-│   ├── provisioning.rs  fleet provisioning by claim with a chip-signed CSR
-│   ├── mqtt.rs       esp-mqtt over the raw ESP-IDF API (secure-element TLS)
-│   ├── identity.rs   thing name + certificate in NVS
-│   ├── jobs.rs, ota.rs, job_store.rs  OTA updates through AWS IoT Jobs
+├── cloud.rs        AWS IoT link on iot-device-sdk, on its own thread, plus the
+│                   `vaktus` shadow report (see "Cloud link and OTA updates")
 ├── location.rs     NVS load/save for the selected location + the Ezan Vakti list fetches
 ├── location_setup.rs  Touch-driven location picker: country/city/district typed search
 ├── prayer.rs       HTTPS fetch + JSON model for the ezanvakti API (parameterized by district id)
@@ -291,25 +286,37 @@ The display is the `vaktus` product of the AWS IoT platform in
 the OPC UA gateway. The cloud link runs on its own thread; the dashboard never
 waits for it, and prayer times keep working with no cloud at all.
 
+Everything the platform defines (enrolment, OTA, the `platform` shadow, the
+bench console, the publish limiter) comes from
+[`iot-device-sdk`](https://github.com/ergousha/iot-device-sdk); this firmware
+adds only its `vaktus` shadow report. Images carry **no secrets**: the
+endpoint and provisioning template are compiled in from
+[`platform.toml`](platform.toml), and the claim credential and WiFi reach a
+unit only at the bench, over the serial console.
+
 ```mermaid
 sequenceDiagram
+    participant O as Owner (ergo commission)
     participant D as Display (ESP32 + ATECC608B)
     participant IOT as AWS IoT Core
     participant HOOK as Pre-provisioning hook
     participant DB as Device registry
     D->>D: first boot: lock the chip, generate the slot-0 key (one-way)
-    D->>D: log REGISTER mac=… public_key=…
-    Note over D,DB: operator: seed-device --product vaktus --mac … --public-key …
-    D->>IOT: connect with the shared claim certificate
+    O->>D: PLATFORM INFO (serial console)
+    D-->>O: PLATFORM REGISTER mac=… pubkey=…
+    O->>DB: record: product vaktus, this key, enrol_by now + 1 h
+    O->>D: PLATFORM SET claim_cert / claim_key / wifi_*, ENROL
+    O->>IOT: claim certificate ACTIVE (for the window only)
+    D->>IOT: connect as claim-<MAC12>
     D->>IOT: CreateCertificateFromCsr (CSR signed inside the chip)
     IOT-->>D: certificate for the chip's key
     D->>IOT: RegisterThing (SerialNumber, MacAddress)
     IOT->>HOOK: pre-provisioning check
-    HOOK->>DB: record for this MAC
-    HOOK-->>IOT: allow only if product = vaktus and the certificate carries the registered key
+    HOOK->>DB: record for this MAC: once, in its window, this key
     IOT-->>D: thingName
+    D->>D: store the identity, erase the claim
     D->>IOT: connect as the thing; TLS signed by the chip
-    D->>IOT: AWS IoT Jobs (OTA), shadow "vaktus" report
+    D->>IOT: AWS IoT Jobs (OTA), shadows "platform" and "vaktus"
 ```
 
 ### Secure element: ATECC608B
@@ -332,40 +339,37 @@ ever authenticates with.
   serial, lock state, slot configuration, self-test):
   `cargo build --release --example atecc608_probe`.
 
-### Registering a device
+### Commissioning a unit
 
-The device logs what to register on every boot:
-
-```text
-REGISTER product=vaktus mac=38:18:2B:84:56:F4 atecc_serial=… public_key=<128 hex digits>
-```
-
-Register it with the gateway repository's tool (AWS credentials needed):
+Once, at the bench, with the unit on USB and the owner's AWS session:
 
 ```sh
-cargo run -p seed-device --target host-tuple -- \
-    --product vaktus --mac 38:18:2B:84:56:F4 --public-key <128 hex digits>
+ergo commission --product vaktus --port /dev/cu.usbserial-110 \
+    --wifi-ssid <ssid> --wifi-psk-env WIFI_PSK
 ```
 
-Until then the registry refuses it (403), and the device retries (1 minute,
-backing off to 15); **Settings → About → Cloud** shows
-`awaiting registration (MAC)`. Other refusals (throttling, a template problem)
-show `provisioning refused: …` with the reason. There is no shared secret: only
-the chip holding the registered key can enrol. The stored identity remembers
-which key it was issued for, so a unit whose ATECC608B module is replaced
-provisions again (register the new key first).
+`ergo` (from iot-device-sdk) reads the MAC and the chip's public key off the
+console, registers them, writes the claim and WiFi into NVS `platform`, opens
+a short enrolment window and waits until the unit is enrolled. The unit erases
+the claim as soon as it has its own certificate. Without a claim a unit waits
+(**Settings → About → Cloud**: `awaiting commissioning (MAC)`); a refusal backs
+off from a minute to six hours. The stored identity remembers which key it was
+issued for, so a unit whose ATECC608B module is replaced enrols again
+(`ergo commission --reprovision`).
 
 ### OTA updates
 
 Releases go to `s3://<firmware bucket>/vaktus/firmware_vX.Y.Z.bin`; the
 platform turns each upload into an AWS IoT Job for the `esp32-ztp-vaktus-fleet`
-thing group only. The device runs the Jobs state machine shared with the
-gateway (`iot-jobs`): it downloads the image over HTTPS into the inactive slot,
+thing group only. The SDK runs the platform's Jobs state machine
+(`iot-jobs`): it installs only a version greater than the running one (unless
+the job says `downgrade`), checks a signed manifest when the job carries one,
+downloads the image over HTTPS into the inactive slot while hashing it,
 restarts into it, and the **new** image reports SUCCEEDED once it has reached
 AWS IoT and marked itself valid. An image that does not get there within 10
 minutes restarts, and the bootloader rolls it back; the previous image then
-reports FAILED, `rolled back`. A job whose document names another product is
-refused without a download.
+reports FAILED, `rollback`. A job for another product, or for an operation the
+firmware does not know, is REJECTED without a download.
 
 ### Flash layout
 
@@ -402,15 +406,16 @@ covers the bootloader and the partition table.
 
 ### Build configuration
 
-`build.rs` reads the platform's settings from AWS SSM with the `aws` CLI
-(credentials from `aws-env.sh`, see `aws-env.sh.example`, or the environment):
-the shared claim certificate and key into `certs/` and the IoT endpoint and the
-`vaktus` provisioning template into `cfg.toml`, all gitignored. Without SSM
-access the build still succeeds and the cloud link stays off.
+`build.rs` calls `platform_build::configure()` (iot-device-sdk): it reads
+[`platform.toml`](platform.toml), checks the frozen partition rows, pins the
+version (`FW_VERSION`, else the crate version) and stages the bootloader. No
+AWS access and no secret is involved; a plain `cargo build --release` produces
+the image that ships. `scripts/scan-image.py firmware.bin` checks an image
+holds no private key and no certificate but the Amazon root CA (CI runs it).
 
-The `iot-jobs` crate comes from the gateway repository through git. If your git
-configuration rewrites GitHub HTTPS URLs to SSH (`url.….insteadOf`), let Cargo
-use the git CLI: `export CARGO_NET_GIT_FETCH_WITH_CLI=true`.
+The SDK comes through git. If your git configuration rewrites GitHub HTTPS
+URLs to SSH (`url.….insteadOf`), let Cargo use the git CLI:
+`export CARGO_NET_GIT_FETCH_WITH_CLI=true`.
 
 ## Rust / ESP-IDF toolchain setup
 
@@ -471,25 +476,12 @@ key `creds`) and reused on every later boot. You can re-run setup any time from
 **Settings → WiFi** (e.g. after changing routers or passwords). No reflash is
 needed to change networks.
 
-### Optional: seeding credentials at build time (dev/CI)
+### Seeding credentials at the bench
 
-For a headless bench/CI build — where there's no one to tap through setup — you
-can still bake in credentials via [`toml-cfg`](https://github.com/jamesmunns/toml-cfg).
-If present, `cfg.toml` only *seeds* NVS on the very first boot (when no
-credentials are stored yet); the on-device value always wins afterwards.
-`cfg.toml` is gitignored, so the password never ends up in the repo:
-
-```sh
-cp cfg.toml.example cfg.toml
-# edit cfg.toml with your real SSID/password
-```
-
-```toml
-# cfg.toml
-[namaz-vakti]
-wifi_ssid = "YOUR_WIFI_SSID"
-wifi_psk = "YOUR_WIFI_PASSWORD"
-```
+A headless unit (no one to tap through setup) takes the WiFi written at the
+bench by `ergo commission --wifi-ssid … --wifi-psk-env …`: on first boot it is
+copied into the setup's own NVS record. The on-device value always wins
+afterwards. Nothing is compiled into the image.
 
 ## Build & flash
 

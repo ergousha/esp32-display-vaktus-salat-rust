@@ -3,9 +3,9 @@ name: ESP32 Build
 # Builds the firmware for the ESP32 and checks that the image still fits an
 # OTA slot of partitions.csv with room to spare.
 #
-# Pull requests build without AWS access, so build.rs leaves placeholders and
-# the image has the cloud link off; that is fine for a compile and size check.
-# The release workflow builds the image that ships.
+# Builds need no AWS access and no secrets (platform-build reads only
+# platform.toml), so this is the same image the release workflow ships, apart
+# from FW_VERSION. It is scanned for secrets like the release image.
 
 on:
   push:
@@ -89,3 +89,6 @@ jobs:
             echo "::error::The image takes ${percent}% of an OTA slot (limit ${MAX_SLOT_PERCENT}%)."
             exit 1
           fi
+
+      - name: Scan the image for secrets
+        run: python3 scripts/scan-image.py firmware.bin

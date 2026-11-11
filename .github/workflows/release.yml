@@ -14,10 +14,11 @@ name: ESP32 Release
 # They are separate so a failed firmware build can be re-run on its own:
 # release-please reports a release as created only once.
 #
-# The image carries the shared claim certificate and key from SSM. This
-# repository is public, so the image goes only to the private firmware bucket:
-# never to the GitHub Release, never into a cache. It carries no WiFi
-# credentials; those are set on the device.
+# The image carries no secrets (platform plan, Phase 2): the endpoint and
+# template come from platform.toml, the claim and WiFi are written to a unit
+# at the bench. The build runs without AWS credentials; only the upload
+# assumes the OIDC role. The image is still delivered only through the
+# firmware bucket until releases are signed (Phase 3).
 
 on:
   push:
@@ -116,46 +117,26 @@ jobs:
           unzip -q "$archive" -d "$HOME/.cargo/bin"
           chmod +x "$HOME/.cargo/bin/cargo-espflash"
 
-      # Before the build: build.rs reads the IoT endpoint, the vaktus
-      # provisioning template and the claim identity from SSM with these
-      # credentials (the vaktus CI role may read exactly those).
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: eu-central-1
-
-      # An empty section: no WiFi is seeded (it is set on the device); build.rs
-      # adds the SSM values.
-      - name: Write cfg.toml
-        run: echo '[namaz-vakti]' > cfg.toml
-
+      # No AWS credentials and no cfg.toml: platform-build reads only
+      # platform.toml. FW_VERSION pins the version the image reports to the
+      # release tag (platform-build refuses anything but X.Y.Z).
       - name: Build for ESP32
-        run: cargo build --release
-
-      # build.rs does not fail without SSM: it writes placeholders and builds,
-      # which is right for a checkout and wrong for a release. Such an image
-      # never reaches AWS IoT, so every device would roll it back. Refuse to
-      # ship it. Nothing here prints a value.
-      - name: Verify the image's configuration
-        run: |
-          fail=0
-          for key in iot_endpoint provisioning_template; do
-            if ! grep -Eq "^${key} = \".+\"" cfg.toml; then
-              echo "::error::cfg.toml has no ${key}; the image could not connect."
-              fail=1
-            fi
-          done
-          if grep -q PLACEHOLDER certs/claim.crt.pem certs/claim.private.key; then
-            echo "::error::The claim identity is a placeholder: SSM was not readable."
-            fail=1
-          fi
-          exit "$fail"
+        run: FW_VERSION="${TAG_NAME#v}" cargo build --release
 
       - name: Generate firmware image
         run: >-
           cargo espflash save-image --release --chip esp32 --flash-size 4mb
           --partition-table partitions.csv --target-app-partition ota_0 firmware.bin
+
+      - name: Scan the image for secrets
+        run: python3 scripts/scan-image.py firmware.bin
+
+      # Only now, and only for the upload.
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-central-1
 
       - name: Upload firmware to S3 (triggers the OTA job)
         env:

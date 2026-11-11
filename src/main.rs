@@ -63,19 +63,8 @@ use wifi_credentials::WifiCredentials;
 /// if you want a dimmer default; the backlight is on GPIO27 via LEDC PWM.
 const BACKLIGHT_DUTY_PERCENT: u32 = 100;
 
-#[toml_cfg::toml_config]
-pub struct Config {
-    #[default("")]
-    wifi_ssid: &'static str,
-    #[default("")]
-    wifi_psk: &'static str,
-    /// AWS IoT endpoint and provisioning template; build.rs writes both from
-    /// SSM (iot-platform-infra). Empty: the cloud link stays off.
-    #[default("")]
-    iot_endpoint: &'static str,
-    #[default("")]
-    provisioning_template: &'static str,
-}
+// `PLATFORM`: this product as platform.toml describes it (platform-build).
+include!(concat!(env!("OUT_DIR"), "/platform.rs"));
 
 /// Which calendar the header's date is shown in. Chosen from the settings
 /// screen and persisted to NVS; the discriminant doubles as the stored byte.
@@ -190,7 +179,9 @@ fn main() -> anyhow::Result<()> {
     let nvs = EspDefaultNvsPartition::take()?;
     // Before anything that can block (WiFi setup waits for a person): a new
     // OTA image that never reaches AWS IoT must still be rolled back.
-    cloud::start_rollback_guard();
+    device_sdk::start_rollback_guard();
+    // Counts the boot and starts the bench console (ergo commission).
+    let platform = device_sdk::Platform::init(&PLATFORM, nvs.clone())?;
 
     // --- Persisted UI settings (language + header date mode) ---
     // Loaded before the first splash so every status message renders in the
@@ -345,12 +336,11 @@ fn main() -> anyhow::Result<()> {
     log::info!("Loaded location: {selected_location:?}");
 
     // --- WiFi credentials + connection ---
-    // Credentials live in NVS now (set on-device via the setup flow below),
-    // replacing the compile-time cfg.toml values. cfg.toml, if present, only
-    // *seeds* NVS on first boot, so headless CI/bench builds still connect
-    // without a person to tap through setup.
+    // Credentials live in NVS (set on-device via the setup flow below). Wi-Fi
+    // written at the bench (`ergo commission`) seeds them on first boot, so a
+    // headless bench unit connects without a person to tap through setup.
     let wifi_nvs = wifi_credentials::open(nvs.clone())?;
-    seed_credentials_from_cfg(&wifi_nvs);
+    seed_credentials_from_platform(&wifi_nvs, &platform);
     let creds = wifi_credentials::load(&wifi_nvs);
 
     let mut wifi = BlockingWifi::wrap(
@@ -400,10 +390,7 @@ fn main() -> anyhow::Result<()> {
 
     // --- Cloud link (AWS IoT: provisioning, OTA updates, shadow) ---
     // Runs on its own thread; the dashboard never waits for it.
-    match wifi.wifi().sta_netif().get_mac() {
-        Ok(mac) => cloud::spawn(nvs.clone(), mac),
-        Err(e) => log::error!("no station MAC, cloud link not started: {e:?}"),
-    }
+    cloud::spawn(platform, nvs.clone());
 
     // --- Prayer time data: the NVS cache (loaded above) lets a reboot show the
     // dashboard immediately instead of blocking on a fresh HTTPS fetch ---
@@ -987,23 +974,25 @@ where
     }
 }
 
-/// Seeds NVS from the compile-time `cfg.toml` credentials on first boot only, so
-/// headless CI/bench builds (with no one to tap through setup) still connect.
-/// A no-op once NVS already holds credentials, or when `cfg.toml` is absent
-/// (the default empty `CONFIG.wifi_ssid`).
-fn seed_credentials_from_cfg(wifi_nvs: &esp_idf_svc::nvs::EspNvs<esp_idf_svc::nvs::NvsDefault>) {
-    if CONFIG.wifi_ssid.is_empty() {
-        return; // no build-time seed configured
-    }
+/// Seeds NVS from the Wi-Fi written at the bench (NVS `platform`, by `ergo
+/// commission`) on first boot only, so a headless bench unit connects with no
+/// one to tap through setup. A no-op once NVS holds credentials of its own.
+fn seed_credentials_from_platform(
+    wifi_nvs: &esp_idf_svc::nvs::EspNvs<esp_idf_svc::nvs::NvsDefault>,
+    platform: &device_sdk::Platform,
+) {
     if wifi_credentials::load(wifi_nvs).is_some() {
-        return; // NVS already provisioned — never override the on-device value
+        return; // never override the on-device value
     }
-    let seed = WifiCredentials::new(CONFIG.wifi_ssid, CONFIG.wifi_psk);
+    let Some((ssid, psk)) = platform.wifi() else {
+        return;
+    };
+    let seed = WifiCredentials::new(&ssid, &psk);
     if seed.is_valid() {
-        log::info!("Seeding WiFi credentials from cfg.toml on first boot");
+        log::info!("Seeding WiFi credentials from the bench-provisioned ones");
         wifi_credentials::save(wifi_nvs, &seed);
     } else {
-        log::warn!("cfg.toml WiFi credentials are invalid; skipping first-boot seed");
+        log::warn!("bench-provisioned WiFi credentials are invalid; skipping the seed");
     }
 }
 

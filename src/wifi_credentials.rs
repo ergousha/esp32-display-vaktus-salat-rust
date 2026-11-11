@@ -1,5 +1,5 @@
 //! Persists the user's WiFi credentials to NVS flash so they survive reboots,
-//! replacing the compile-time `cfg.toml` → `CONFIG.wifi_ssid`/`wifi_psk` values.
+//! seeded on first boot from the Wi-Fi written at the bench, if any.
 //!
 //! Follows the open/load/save convention of [`crate::cache`] and
 //! [`crate::touch_calibration`]. Stored as a `serde_json` blob (like
