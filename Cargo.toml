@@ -30,10 +30,10 @@ anyhow = "1"
 namaz-vakti-logic = { path = "logic" }
 # The platform device SDK (ergousha/iot-device-sdk): enrolment with the
 # ATECC608B, OTA, the platform shadow, the bench console.
-device-sdk = { git = "https://github.com/ergousha/iot-device-sdk", rev = "43349bc73aea63c9ed0dd08043f97d1a24d3641d", features = ["atecc608"] }
+device-sdk = { git = "https://github.com/ergousha/iot-device-sdk", rev = "db888a821a117448b84a1fa7d292990275d05980", features = ["atecc608"] }
 
 [build-dependencies]
-platform-build = { git = "https://github.com/ergousha/iot-device-sdk", rev = "43349bc73aea63c9ed0dd08043f97d1a24d3641d" }
+platform-build = { git = "https://github.com/ergousha/iot-device-sdk", rev = "db888a821a117448b84a1fa7d292990275d05980" }
 
 # Microchip CryptoAuthLib for the ATECC608B (TrustCustom). The bindings cover
 # the chip calls device-sdk makes itself (its atecc module); TLS signing

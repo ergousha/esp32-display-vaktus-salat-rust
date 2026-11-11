@@ -124,9 +124,19 @@ jobs:
         run: FW_VERSION="${TAG_NAME#v}" cargo build --release
 
       - name: Generate firmware image
+        # save-image builds again: with the same FW_VERSION, or the image
+        # would carry the crate version instead of the tag's.
         run: >-
+          FW_VERSION="${TAG_NAME#v}"
           cargo espflash save-image --release --chip esp32 --flash-size 4mb
           --partition-table partitions.csv --target-app-partition ota_0 firmware.bin
+
+      - name: Check the image carries the release version
+        run: |
+          if ! grep -aqF "${TAG_NAME#v}" firmware.bin; then
+            echo "::error::firmware.bin does not carry version ${TAG_NAME#v}"
+            exit 1
+          fi
 
       - name: Scan the image for secrets
         run: python3 scripts/scan-image.py firmware.bin
