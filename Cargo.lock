@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "namaz-vakti"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "device-sdk",
