@@ -2,6 +2,7 @@
 name = "namaz-vakti"
 version = "0.8.0"
 edition = "2021"
+license = "MIT"
 resolver = "2"
 rust-version = "1.82"
 
