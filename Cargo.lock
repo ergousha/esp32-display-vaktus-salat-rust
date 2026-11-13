@@ -460,7 +460,7 @@ dependencies = [
 [[package]]
 name = "device-core"
 version = "0.1.0"
-source = "git+https://github.com/ergousha/iot-device-sdk?rev=78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d#78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d"
+source = "git+https://github.com/ergousha/iot-device-sdk?rev=867160f2dea9b8212d50983674c279416cfdd250#867160f2dea9b8212d50983674c279416cfdd250"
 dependencies = [
  "base64",
  "serde",
@@ -471,7 +471,7 @@ dependencies = [
 [[package]]
 name = "device-sdk"
 version = "0.1.0"
-source = "git+https://github.com/ergousha/iot-device-sdk?rev=78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d#78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d"
+source = "git+https://github.com/ergousha/iot-device-sdk?rev=867160f2dea9b8212d50983674c279416cfdd250#867160f2dea9b8212d50983674c279416cfdd250"
 dependencies = [
  "anyhow",
  "device-core",
@@ -1093,7 +1093,7 @@ dependencies = [
 [[package]]
 name = "iot-jobs"
 version = "0.4.0"
-source = "git+https://github.com/ergousha/iot-device-sdk?rev=78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d#78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d"
+source = "git+https://github.com/ergousha/iot-device-sdk?rev=867160f2dea9b8212d50983674c279416cfdd250#867160f2dea9b8212d50983674c279416cfdd250"
 dependencies = [
  "base64",
  "log",
@@ -1357,7 +1357,7 @@ dependencies = [
 [[package]]
 name = "platform-build"
 version = "0.1.0"
-source = "git+https://github.com/ergousha/iot-device-sdk?rev=78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d#78edb6a145e3e6bfc3b3ba467b6e97a464e2d28d"
+source = "git+https://github.com/ergousha/iot-device-sdk?rev=867160f2dea9b8212d50983674c279416cfdd250#867160f2dea9b8212d50983674c279416cfdd250"
 dependencies = [
  "device-core",
  "embuild",
