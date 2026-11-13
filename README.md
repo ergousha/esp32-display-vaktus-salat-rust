@@ -363,7 +363,8 @@ Releases go to `s3://<firmware bucket>/vaktus/firmware_vX.Y.Z.bin`; the
 platform turns each upload into an AWS IoT Job for the `esp32-ztp-vaktus-fleet`
 thing group only. The SDK runs the platform's Jobs state machine
 (`iot-jobs`): it installs only a version greater than the running one (unless
-the job says `downgrade`), checks a signed manifest when the job carries one,
+the job says `downgrade`), checks the job's signed manifest (it is built
+`signed-only`: a job without one fails with `sig`),
 downloads the image over HTTPS into the inactive slot while hashing it,
 restarts into it, and the **new** image reports SUCCEEDED once it has reached
 AWS IoT and marked itself valid. An image that does not get there within 10
