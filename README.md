@@ -315,7 +315,7 @@ sequenceDiagram
     HOOK->>DB: record for this MAC: once, in its window, this key
     IOT-->>D: thingName
     D->>D: store the identity, erase the claim
-    D->>IOT: connect as the thing; TLS signed by the chip
+    D->>IOT: connect as the thing, TLS signed by the chip
     D->>IOT: AWS IoT Jobs (OTA), shadows "platform" and "vaktus"
 ```
 
@@ -326,6 +326,8 @@ GPIO25**, address 0xC0; the module brings its own pull-ups). The classic ESP32
 has no key-protection hardware of its own, so the chip holds the device's
 private key: generated inside it, never readable, and the only key the device
 ever authenticates with.
+
+![Back view of the display board with the ATECC608B secure element attached](docs/board-atecc608b.jpg)
 
 - **First boot** (any blank chip): the firmware locks the configuration zone as
   it left the factory (slot 0 is already a P-256 private key for external
